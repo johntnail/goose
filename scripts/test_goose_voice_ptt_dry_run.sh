@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VOICE_SCRIPT="${ROOT_DIR}/scripts/goose-voice-ptt.sh"
 LAUNCH_SCRIPT="${ROOT_DIR}/scripts/goose-voice-ptt-launch.sh"
+SESSION_LAUNCH_SCRIPT="${ROOT_DIR}/scripts/goose-voice-ptt-session.sh"
 DOCS_FILE="${ROOT_DIR}/documentation/docs/guides/sessions/in-session-actions.md"
 
 if [[ ! -x "${VOICE_SCRIPT}" ]]; then
@@ -13,6 +14,11 @@ fi
 
 if [[ ! -x "${LAUNCH_SCRIPT}" ]]; then
   echo "launcher script not executable: ${LAUNCH_SCRIPT}" >&2
+  exit 1
+fi
+
+if [[ ! -x "${SESSION_LAUNCH_SCRIPT}" ]]; then
+  echo "session launcher script not executable: ${SESSION_LAUNCH_SCRIPT}" >&2
   exit 1
 fi
 
@@ -1273,6 +1279,21 @@ require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_VOICE_SESSION_KEY=" "
 require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=" "print-session-env"
 require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_VOICE_PROVIDER=" "print-session-env"
 pass "print-session-env emits per-session export hints"
+
+SESSION_LAUNCH_DRY_OUT="$(${SESSION_LAUNCH_SCRIPT} --dry-run 2>&1)"
+require_output_contains "${SESSION_LAUNCH_DRY_OUT}" "export GOOSE_VOICE_SESSION_KEY=" "session launcher dry-run"
+require_output_contains "${SESSION_LAUNCH_DRY_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=" "session launcher dry-run"
+require_output_contains "${SESSION_LAUNCH_DRY_OUT}" "Would run: goose session" "session launcher dry-run"
+pass "session launcher dry-run emits voice exports and default goose command"
+
+SESSION_LAUNCH_KEY_DRY_OUT="$(${SESSION_LAUNCH_SCRIPT} --session-key voice-demo --dry-run -- session -n voice-demo 2>&1)"
+require_output_contains "${SESSION_LAUNCH_KEY_DRY_OUT}" "export GOOSE_VOICE_SESSION_KEY=\"voice-demo\"" "session launcher session-key dry-run"
+require_output_contains "${SESSION_LAUNCH_KEY_DRY_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=\"/tmp/goose-cli-voice-transcript-voice-demo.txt\"" "session launcher session-key dry-run"
+require_output_contains "${SESSION_LAUNCH_KEY_DRY_OUT}" "Would run: goose session -n voice-demo" "session launcher session-key dry-run"
+pass "session launcher supports --session-key and passthrough goose args"
+
+run_failure_case "session launcher rejects missing --session-key value" 8 \
+  "${SESSION_LAUNCH_SCRIPT}" --session-key --dry-run
 
 SESSION_KEY_DRY_OUT="$(GOOSE_VOICE_SESSION_KEY='demo-room' ${VOICE_SCRIPT} --dry-run --provider command --transcribe-cmd cat 2>&1)"
 require_output_contains "${SESSION_KEY_DRY_OUT}" "Transcript file: /tmp/goose-cli-voice-transcript-demo-room.txt" "session-key env dry-run"

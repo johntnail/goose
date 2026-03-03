@@ -267,6 +267,9 @@ Speak to goose directly instead of typing your prompts.
 
            # Optional launcher wrapper: runs with --status-json and prints a concise outcome summary
            scripts/goose-voice-ptt-launch.sh --ptt-mode hold --ptt-key space --insert-mode auto
+
+           # Optional one-command session bootstrap (replaces manual eval+session wiring)
+           scripts/goose-voice-ptt-session.sh --session-key demo
            ```
 
         3. Hold `Space` to record, release to transcribe.
@@ -293,6 +296,7 @@ Speak to goose directly instead of typing your prompts.
           - `--transcribe-cmd` (legacy shell-string command mode), or
           - `--transcribe-bin` + repeatable `--transcribe-arg` (safer argv mode)
         - `--print-session-env` to emit per-session exports for transcript path isolation (run via `eval "$(scripts/goose-voice-ptt.sh --print-session-env --session-key demo)"`)
+        - `scripts/goose-voice-ptt-session.sh --session-key demo` to launch goose with the same per-session env wiring in one command
         - `--session-key KEY` to derive deterministic transcript-file defaults across terminals without manually passing `--transcript-file`
 
         Troubleshooting and preflight:
