@@ -883,10 +883,10 @@ insert_transcript_tmux() {
     target_args=(-t "$TMUX_TARGET")
   fi
 
-  tmux set-buffer -- "$text"
-  tmux paste-buffer -d "${target_args[@]}"
+  tmux set-buffer -- "$text" || return 1
+  tmux paste-buffer -d "${target_args[@]}" || return 1
   if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
-    tmux send-keys "${target_args[@]}" Enter
+    tmux send-keys "${target_args[@]}" Enter || return 1
   fi
 
   echo "✅ Transcript pasted into tmux pane${TMUX_TARGET:+ ($TMUX_TARGET)}."

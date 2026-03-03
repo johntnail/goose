@@ -257,6 +257,69 @@ EOF
   pass "launcher emits concise fallback/error summaries for accessibility failures"
 }
 
+run_launcher_tmux_error_summary_smoke() {
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${@: -1}"
+mkdir -p "$(dirname "${out}")"
+printf "fake-audio" >"${out}"
+EOF
+  chmod +x "${fake_bin}/ffmpeg"
+
+  cat >"${fake_bin}/tmux" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  set-buffer)
+    exit 0
+    ;;
+  paste-buffer)
+    exit 1
+    ;;
+  send-keys)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+EOF
+  chmod +x "${fake_bin}/tmux"
+
+  set +e
+  local error_out
+  error_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode tmux \
+    --tmux-target dev:1.1 \
+    --provider command \
+    --transcribe-cmd 'printf "launcher tmux error smoke transcript\\n"' 2>&1)"
+  local error_rc=$?
+  set -e
+
+  if [[ "${error_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "launcher tmux error smoke: expected rc 14, got ${error_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${error_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${error_out}" "❌ Voice run failed (delivery=tmux, reason=tmux_insert_failed)." "launcher tmux error smoke"
+  require_output_contains "${error_out}" "Hint: verify tmux session/target pane (use --tmux-target if needed)." "launcher tmux error smoke"
+
+  rm -rf "${tmp_dir}"
+  pass "launcher emits concise tmux failure summary with guidance"
+}
+
 BASE_CMD=("${VOICE_SCRIPT}" --dry-run --provider command --transcribe-cmd cat)
 
 # Default/file dry-run should succeed and keep file insertion.
@@ -297,6 +360,7 @@ fi
 
 run_auto_mode_paste_fallback_smoke
 run_launcher_status_summary_smoke
+run_launcher_tmux_error_summary_smoke
 
 # Hold mode dry-run should surface preflight readiness details.
 HOLD_OUT="$(${VOICE_SCRIPT} --dry-run --ptt-mode hold --provider command --transcribe-cmd cat 2>&1)"
