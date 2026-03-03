@@ -103,6 +103,7 @@ HOLD_KEY_CODE=""
 HOLD_PREFLIGHT_STATUS="n/a"
 HOLD_PREFLIGHT_DETAIL=""
 EFFECTIVE_PTT_MODE=""
+WORK_DIR=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -248,6 +249,19 @@ clear_status_lines() {
   done
   STATUS_LINES=0
 }
+
+cleanup_on_exit() {
+  local exit_code=$?
+
+  clear_status_lines || true
+
+  if [[ -n "${WORK_DIR:-}" && -d "${WORK_DIR:-}" ]]; then
+    rm -rf "$WORK_DIR"
+  fi
+
+  return "$exit_code"
+}
+trap cleanup_on_exit EXIT
 
 ptt_key_to_code() {
   local key="$1"
@@ -506,7 +520,6 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"' EXIT
 AUDIO_PATH="$WORK_DIR/clip.m4a"
 WAV_PATH="$WORK_DIR/clip.wav"
 OUT_PREFIX="$WORK_DIR/transcript"
