@@ -257,6 +257,140 @@ EOF
   pass "launcher emits concise fallback/error summaries for accessibility failures"
 }
 
+run_auto_submit_failure_reason_smoke() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    skip "auto-submit failure smoke requires macOS"
+    return
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${@: -1}"
+mkdir -p "$(dirname "${out}")"
+printf "fake-audio" >"${out}"
+EOF
+  chmod +x "${fake_bin}/ffmpeg"
+
+  cat >"${fake_bin}/pbcopy" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+EOF
+  chmod +x "${fake_bin}/pbcopy"
+
+  cat >"${fake_bin}/osascript" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+script="$(cat)"
+
+if [[ "${script}" == *"keystroke \"v\" using command down"* ]]; then
+  exit 0
+fi
+
+if [[ "${script}" == *"key code 36"* ]]; then
+  exit 1
+fi
+
+if [[ "${script}" == *"count every process"* ]]; then
+  exit 0
+fi
+
+exit 0
+EOF
+  chmod +x "${fake_bin}/osascript"
+
+  set +e
+  local status_err_out
+  status_err_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --auto-submit \
+    --provider command \
+    --transcribe-cmd 'printf "status auto-submit failure transcript\\n"' \
+    --status-json 2>&1)"
+  local status_err_rc=$?
+  set -e
+
+  if [[ "${status_err_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "status-json auto-submit error smoke: expected rc 14, got ${status_err_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${status_err_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${status_err_out}" "GOOSE_VOICE_PASTE_FAILURE_REASON=auto_submit_key_event_blocked" "status-json auto-submit error smoke"
+  require_output_contains "${status_err_out}" "GOOSE_VOICE_STATUS_JSON=" "status-json auto-submit error smoke"
+  require_output_contains "${status_err_out}" "\"outcome\":\"error\"" "status-json auto-submit error smoke"
+  require_output_contains "${status_err_out}" "\"delivery_mode\":\"paste\"" "status-json auto-submit error smoke"
+  require_output_contains "${status_err_out}" "\"reason\":\"auto_submit_key_event_blocked\"" "status-json auto-submit error smoke"
+
+  local transcript_file="${tmp_dir}/auto-submit-fallback-transcript.txt"
+  set +e
+  local status_fallback_out
+  status_fallback_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode auto \
+    --auto-submit \
+    --provider command \
+    --transcribe-cmd 'printf "status auto-submit fallback transcript\\n"' \
+    --transcript-file "${transcript_file}" \
+    --status-json 2>&1)"
+  local status_fallback_rc=$?
+  set -e
+
+  if [[ "${status_fallback_rc}" -ne 0 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "status-json auto-submit fallback smoke: expected rc 0, got ${status_fallback_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${status_fallback_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${status_fallback_out}" "Focused-app paste failed; falling back to transcript file mode. (reason: auto_submit_key_event_blocked)" "status-json auto-submit fallback smoke"
+  require_output_contains "${status_fallback_out}" "\"outcome\":\"ok_fallback\"" "status-json auto-submit fallback smoke"
+  require_output_contains "${status_fallback_out}" "\"fallback_from\":\"paste\"" "status-json auto-submit fallback smoke"
+  require_output_contains "${status_fallback_out}" "\"delivery_mode\":\"file\"" "status-json auto-submit fallback smoke"
+  require_output_contains "${status_fallback_out}" "\"reason\":\"auto_submit_key_event_blocked\"" "status-json auto-submit fallback smoke"
+  require_file_equals "${transcript_file}" "status auto-submit fallback transcript submit" "status-json auto-submit fallback smoke"
+
+  set +e
+  local launcher_err_out
+  launcher_err_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --auto-submit \
+    --provider command \
+    --transcribe-cmd 'printf "launcher auto-submit error transcript\\n"' 2>&1)"
+  local launcher_err_rc=$?
+  set -e
+
+  if [[ "${launcher_err_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "launcher auto-submit error smoke: expected rc 14, got ${launcher_err_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${launcher_err_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${launcher_err_out}" "❌ Voice run failed (delivery=paste, reason=auto_submit_key_event_blocked)." "launcher auto-submit error smoke"
+  require_output_contains "${launcher_err_out}" "Hint: focused app blocked synthetic key events; retry with --insert-mode file or adjust permissions/state." "launcher auto-submit error smoke"
+
+  rm -rf "${tmp_dir}"
+  pass "status-json and launcher expose auto-submit key-event failure reasons"
+}
+
 run_launcher_tmux_fallback_summary_smoke() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
@@ -426,6 +560,7 @@ fi
 
 run_auto_mode_paste_fallback_smoke
 run_launcher_status_summary_smoke
+run_auto_submit_failure_reason_smoke
 run_launcher_tmux_fallback_summary_smoke
 run_launcher_tmux_error_summary_smoke
 
