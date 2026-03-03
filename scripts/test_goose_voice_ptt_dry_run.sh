@@ -1278,11 +1278,21 @@ SESSION_ENV_OUT="$(${VOICE_SCRIPT} --print-session-env 2>&1)"
 require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_VOICE_SESSION_KEY=" "print-session-env"
 require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=" "print-session-env"
 require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_VOICE_PROVIDER=" "print-session-env"
+require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_VOICE_LANG=" "print-session-env"
 pass "print-session-env emits per-session export hints"
+
+SESSION_ENV_OVERRIDE_OUT="$(${VOICE_SCRIPT} --print-session-env --session-key env-room --transcript-file /tmp/goose-voice-env-room.txt --provider command --model demo-model --lang fr 2>&1)"
+require_output_contains "${SESSION_ENV_OVERRIDE_OUT}" "export GOOSE_VOICE_SESSION_KEY=\"env-room\"" "print-session-env overrides"
+require_output_contains "${SESSION_ENV_OVERRIDE_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=\"/tmp/goose-voice-env-room.txt\"" "print-session-env overrides"
+require_output_contains "${SESSION_ENV_OVERRIDE_OUT}" "export GOOSE_VOICE_PROVIDER=\"command\"" "print-session-env overrides"
+require_output_contains "${SESSION_ENV_OVERRIDE_OUT}" "export GOOSE_VOICE_MODEL=\"demo-model\"" "print-session-env overrides"
+require_output_contains "${SESSION_ENV_OVERRIDE_OUT}" "export GOOSE_VOICE_LANG=\"fr\"" "print-session-env overrides"
+pass "print-session-env respects transcript/provider/model/lang overrides"
 
 SESSION_LAUNCH_DRY_OUT="$(${SESSION_LAUNCH_SCRIPT} --dry-run 2>&1)"
 require_output_contains "${SESSION_LAUNCH_DRY_OUT}" "export GOOSE_VOICE_SESSION_KEY=" "session launcher dry-run"
 require_output_contains "${SESSION_LAUNCH_DRY_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=" "session launcher dry-run"
+require_output_contains "${SESSION_LAUNCH_DRY_OUT}" "export GOOSE_VOICE_LANG=" "session launcher dry-run"
 require_output_contains "${SESSION_LAUNCH_DRY_OUT}" "Would run: goose session" "session launcher dry-run"
 pass "session launcher dry-run emits voice exports and default goose command"
 
@@ -1292,8 +1302,29 @@ require_output_contains "${SESSION_LAUNCH_KEY_DRY_OUT}" "export GOOSE_CLI_VOICE_
 require_output_contains "${SESSION_LAUNCH_KEY_DRY_OUT}" "Would run: goose session -n voice-demo" "session launcher session-key dry-run"
 pass "session launcher supports --session-key and passthrough goose args"
 
+SESSION_LAUNCH_OVERRIDE_DRY_OUT="$(${SESSION_LAUNCH_SCRIPT} --session-key voice-es --transcript-file /tmp/goose-voice-es.txt --provider command --model custom-model --lang es --dry-run -- session -n voz 2>&1)"
+require_output_contains "${SESSION_LAUNCH_OVERRIDE_DRY_OUT}" "export GOOSE_VOICE_SESSION_KEY=\"voice-es\"" "session launcher overrides dry-run"
+require_output_contains "${SESSION_LAUNCH_OVERRIDE_DRY_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=\"/tmp/goose-voice-es.txt\"" "session launcher overrides dry-run"
+require_output_contains "${SESSION_LAUNCH_OVERRIDE_DRY_OUT}" "export GOOSE_VOICE_PROVIDER=\"command\"" "session launcher overrides dry-run"
+require_output_contains "${SESSION_LAUNCH_OVERRIDE_DRY_OUT}" "export GOOSE_VOICE_MODEL=\"custom-model\"" "session launcher overrides dry-run"
+require_output_contains "${SESSION_LAUNCH_OVERRIDE_DRY_OUT}" "export GOOSE_VOICE_LANG=\"es\"" "session launcher overrides dry-run"
+require_output_contains "${SESSION_LAUNCH_OVERRIDE_DRY_OUT}" "Would run: goose session -n voz" "session launcher overrides dry-run"
+pass "session launcher forwards transcript/provider/model/lang overrides"
+
 run_failure_case "session launcher rejects missing --session-key value" 8 \
   "${SESSION_LAUNCH_SCRIPT}" --session-key --dry-run
+
+run_failure_case "session launcher rejects missing --transcript-file value" 8 \
+  "${SESSION_LAUNCH_SCRIPT}" --transcript-file --dry-run
+
+run_failure_case "session launcher rejects missing --provider value" 8 \
+  "${SESSION_LAUNCH_SCRIPT}" --provider --dry-run
+
+run_failure_case "session launcher rejects missing --model value" 8 \
+  "${SESSION_LAUNCH_SCRIPT}" --model --dry-run
+
+run_failure_case "session launcher rejects missing --lang value" 8 \
+  "${SESSION_LAUNCH_SCRIPT}" --lang --dry-run
 
 SESSION_KEY_DRY_OUT="$(GOOSE_VOICE_SESSION_KEY='demo-room' ${VOICE_SCRIPT} --dry-run --provider command --transcribe-cmd cat 2>&1)"
 require_output_contains "${SESSION_KEY_DRY_OUT}" "Transcript file: /tmp/goose-cli-voice-transcript-demo-room.txt" "session-key env dry-run"

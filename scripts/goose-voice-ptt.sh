@@ -412,13 +412,19 @@ print_session_env() {
   local transcript_path
   local session_key
   session_key="$(default_session_key)"
-  transcript_path="$(default_session_transcript_file)"
+
+  if [[ -n "${TRANSCRIPT_FILE}" ]]; then
+    transcript_path="${TRANSCRIPT_FILE}"
+  else
+    transcript_path="$(default_session_transcript_file)"
+  fi
 
   cat <<EOF
 export GOOSE_VOICE_SESSION_KEY="${session_key}"
 export GOOSE_CLI_VOICE_TRANSCRIPT_FILE="${transcript_path}"
 export GOOSE_VOICE_PROVIDER="${PROVIDER}"
 export GOOSE_VOICE_MODEL="${MODEL_PATH}"
+export GOOSE_VOICE_LANG="${LANG}"
 # Optional: export GOOSE_CLI_VOICE_AUTO_SUBMIT=1
 EOF
 }
