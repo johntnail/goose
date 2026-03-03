@@ -281,6 +281,7 @@ Speak to goose directly instead of typing your prompts.
         - `--paste-app "iTerm2"` to activate a specific macOS app before focused-app paste
         - `--auto-submit` to send immediately after insertion
         - `--max-duration SEC` for a hard safety cap
+        - `--min-duration SEC` to reject accidental tap-length clips (use `0` to disable)
         - `--discard` / `--print-only` for safe dry runs
         - `--confirm` to approve or discard before writing transcript into Goose
         - `--provider local|command` with `--model`, `--lang`, and `--transcribe-cmd`

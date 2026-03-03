@@ -15,6 +15,7 @@ Defaults:
   - Transcript file: $GOOSE_CLI_VOICE_TRANSCRIPT_FILE or /tmp/goose-cli-voice-transcript.txt
   - Interactive record mode: press ENTER to start, ENTER to stop
   - Max duration guard in interactive mode: 30s
+  - Minimum clip duration guard: 0.25s (0 disables)
   - Hold mode falls back to ENTER mode if key-state polling is unavailable
 
 Options:
@@ -23,6 +24,7 @@ Options:
   --list-devices          list avfoundation audio devices and exit
   --duration SEC          fixed record duration in seconds (non-interactive; overrides --ptt-mode/--ptt-key)
   --max-duration SEC      safety cap for interactive record mode (default: 30)
+  --min-duration SEC      reject clips shorter than SEC after recording (default: 0.25, 0 disables)
   --ptt-mode MODE         interactive mode: enter|hold (default: enter)
   --ptt-key KEY           hold mode key: space|enter|return|left_shift|right_shift or keycode int (default: space)
   --hold-strict           fail instead of falling back when hold-key detection is unavailable
@@ -51,6 +53,9 @@ Examples:
 
   # Auto-send transcript after insertion
   goose-voice-ptt.sh --auto-submit
+
+  # Reject accidental tap-length clips (require at least 0.4s)
+  goose-voice-ptt.sh --min-duration 0.4
 
   # Ask for confirmation before writing into Goose's transcript bridge file
   goose-voice-ptt.sh --confirm
@@ -86,6 +91,7 @@ MIC_NAME=""
 LIST_DEVICES=0
 DURATION=""
 MAX_DURATION="30"
+MIN_DURATION="${GOOSE_VOICE_MIN_DURATION:-0.25}"
 PTT_MODE="${GOOSE_VOICE_PTT_MODE:-enter}"
 PTT_KEY="${GOOSE_VOICE_PTT_KEY:-space}"
 HOLD_STRICT="${GOOSE_VOICE_HOLD_STRICT:-0}"
@@ -146,6 +152,14 @@ while [[ $# -gt 0 ]]; do
         exit 8
       fi
       MAX_DURATION="${2}"
+      shift 2
+      ;;
+    --min-duration)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "--min-duration requires a non-negative number of seconds." >&2
+        exit 8
+      fi
+      MIN_DURATION="${2}"
       shift 2
       ;;
     --ptt-mode)
@@ -408,6 +422,10 @@ is_positive_seconds() {
   [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v value="$1" 'BEGIN { exit (value > 0) ? 0 : 1 }'
 }
 
+is_non_negative_seconds() {
+  [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v value="$1" 'BEGIN { exit (value >= 0) ? 0 : 1 }'
+}
+
 validate_mic_index() {
   if ! is_non_negative_integer "$MIC_INDEX"; then
     echo "Invalid --mic-index: '$MIC_INDEX' (expected non-negative integer)." >&2
@@ -421,6 +439,16 @@ validate_seconds_arg() {
 
   if ! is_positive_seconds "$value"; then
     echo "Invalid ${flag}: '${value}' (expected positive seconds, e.g. 2 or 2.5)." >&2
+    exit 8
+  fi
+}
+
+validate_non_negative_seconds_arg() {
+  local flag="$1"
+  local value="$2"
+
+  if ! is_non_negative_seconds "$value"; then
+    echo "Invalid ${flag}: '${value}' (expected non-negative seconds, e.g. 0, 0.25, 2)." >&2
     exit 8
   fi
 }
@@ -528,6 +556,7 @@ if [[ -n "$DURATION" ]]; then
   validate_seconds_arg "--duration" "$DURATION"
 fi
 validate_seconds_arg "--max-duration" "$MAX_DURATION"
+validate_non_negative_seconds_arg "--min-duration" "$MIN_DURATION"
 
 validate_mode
 validate_insert_mode
@@ -561,6 +590,10 @@ else
   exit 3
 fi
 
+if awk -v value="$MIN_DURATION" 'BEGIN { exit (value > 0) ? 0 : 1 }'; then
+  require_cmd ffprobe
+fi
+
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "✅ goose-voice-ptt dry run: configuration looks valid"
   echo "   Mic index: ${MIC_INDEX}"
@@ -571,6 +604,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "   Record mode: interactive"
     echo "   PTT mode: ${PTT_MODE} (key: ${PTT_KEY})"
   fi
+  echo "   Min clip duration: ${MIN_DURATION}s"
   if [[ "$PTT_MODE" == "hold" ]]; then
     if [[ "$RECORD_MODE" == "fixed" ]]; then
       echo "   Hold preflight: skipped (fixed-duration mode)"
@@ -690,6 +724,29 @@ record_interactive() {
     record_interactive_hold
   else
     record_interactive_enter
+  fi
+}
+
+audio_duration_seconds() {
+  ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$AUDIO_PATH" 2>/dev/null | tr -d '[:space:]'
+}
+
+enforce_min_duration() {
+  if ! awk -v value="$MIN_DURATION" 'BEGIN { exit (value > 0) ? 0 : 1 }'; then
+    return
+  fi
+
+  local clip_duration
+  clip_duration="$(audio_duration_seconds || true)"
+
+  if [[ -z "$clip_duration" ]] || ! [[ "$clip_duration" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "⚠️  Could not verify clip duration via ffprobe; continuing without min-duration check." >&2
+    return
+  fi
+
+  if awk -v duration="$clip_duration" -v minimum="$MIN_DURATION" 'BEGIN { exit (duration < minimum) ? 0 : 1 }'; then
+    echo "Recording too short (${clip_duration}s < minimum ${MIN_DURATION}s). Tap/hold longer or set --min-duration 0 to disable this guard." >&2
+    exit 15
   fi
 }
 
@@ -838,6 +895,8 @@ if [[ ! -s "$AUDIO_PATH" ]]; then
   echo "Recording failed (empty audio). See: $FFMPEG_LOG" >&2
   exit 6
 fi
+
+enforce_min_duration
 
 status_line "🧠 Transcribing (${PROVIDER})..."
 if [[ "$PROVIDER" == "local" ]]; then

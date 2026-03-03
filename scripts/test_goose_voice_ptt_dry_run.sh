@@ -77,6 +77,7 @@ BASE_CMD=("${VOICE_SCRIPT}" --dry-run --provider command --transcribe-cmd cat)
 # Default/file dry-run should succeed and keep file insertion.
 DEFAULT_OUT="$("${BASE_CMD[@]}" 2>&1)"
 require_output_contains "${DEFAULT_OUT}" "Insert mode: file -> file" "default dry-run"
+require_output_contains "${DEFAULT_OUT}" "Min clip duration: 0.25s" "default dry-run"
 pass "default dry-run (file mode)"
 
 # Auto mode without tmux context should resolve to paste on supported macOS hosts, else file.
@@ -133,6 +134,9 @@ run_failure_case "invalid --duration is rejected" 8 \
 
 run_failure_case "invalid --max-duration is rejected" 8 \
   "${VOICE_SCRIPT}" --dry-run --max-duration 0 --provider command --transcribe-cmd cat
+
+run_failure_case "invalid --min-duration is rejected" 8 \
+  "${VOICE_SCRIPT}" --dry-run --min-duration -1 --provider command --transcribe-cmd cat
 
 run_failure_case "--paste-app requires insert-mode paste|auto" 13 \
   "${VOICE_SCRIPT}" --dry-run --insert-mode file --paste-app iTerm2 --provider command --transcribe-cmd cat
