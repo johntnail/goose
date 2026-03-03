@@ -257,6 +257,60 @@ EOF
   pass "launcher emits concise fallback/error summaries for accessibility failures"
 }
 
+run_mic_name_resolution_smoke() {
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${*}" == *"-list_devices true"* ]]; then
+  cat >&2 <<'LIST'
+[AVFoundation indev @ 0x111] AVFoundation audio devices:
+[AVFoundation indev @ 0x111] [0] Built-in Mic
+[AVFoundation indev @ 0x111] [1] USB Mic
+[AVFoundation indev @ 0x111] [2] USB Mic (Aggregate)
+[AVFoundation indev @ 0x111] AVFoundation video devices:
+LIST
+  exit 1
+fi
+
+echo "unexpected ffmpeg invocation in mic-name smoke: ${*}" >&2
+exit 99
+EOF
+  chmod +x "${fake_bin}/ffmpeg"
+
+  local unique_out
+  unique_out="$(PATH="${fake_bin}:${PATH}" "${VOICE_SCRIPT}" --dry-run --mic-name aggregate --provider command --transcribe-cmd cat 2>&1)"
+  require_output_contains "${unique_out}" "🎤 Selected mic index 2 from name match: aggregate" "mic-name unique smoke"
+  require_output_contains "${unique_out}" "Mic index: 2" "mic-name unique smoke"
+
+  set +e
+  local ambiguous_out
+  ambiguous_out="$(PATH="${fake_bin}:${PATH}" "${VOICE_SCRIPT}" --dry-run --mic-name usb --provider command --transcribe-cmd cat 2>&1)"
+  local ambiguous_rc=$?
+  set -e
+
+  if [[ "${ambiguous_rc}" -ne 11 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "mic-name ambiguous smoke: expected rc 11, got ${ambiguous_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${ambiguous_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${ambiguous_out}" "Multiple audio devices match --mic-name 'usb':" "mic-name ambiguous smoke"
+  require_output_contains "${ambiguous_out}" "[1] USB Mic" "mic-name ambiguous smoke"
+  require_output_contains "${ambiguous_out}" "[2] USB Mic (Aggregate)" "mic-name ambiguous smoke"
+  require_output_contains "${ambiguous_out}" "Use --mic-index N or a more specific --mic-name." "mic-name ambiguous smoke"
+
+  rm -rf "${tmp_dir}"
+  pass "mic-name dry-run resolves unique matches and rejects ambiguous matches"
+}
+
 run_auto_submit_failure_reason_smoke() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
     skip "auto-submit failure smoke requires macOS"
@@ -688,6 +742,7 @@ fi
 
 run_auto_mode_paste_fallback_smoke
 run_launcher_status_summary_smoke
+run_mic_name_resolution_smoke
 run_auto_submit_failure_reason_smoke
 run_launcher_tmux_fallback_summary_smoke
 run_launcher_tmux_error_summary_smoke

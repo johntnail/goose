@@ -20,7 +20,7 @@ Defaults:
 
 Options:
   --mic-index N           avfoundation audio index (default: 0)
-  --mic-name TEXT         case-insensitive device name match (overrides --mic-index)
+  --mic-name TEXT         case-insensitive device name match (overrides --mic-index; errors if ambiguous)
   --list-devices          list avfoundation audio devices and exit
   --duration SEC          fixed record duration in seconds (non-interactive; overrides --ptt-mode/--ptt-key)
   --max-duration SEC      safety cap for interactive record mode (default: 30)
@@ -598,32 +598,73 @@ list_audio_devices() {
 
 resolve_mic_name() {
   local query="$1"
-  local out lower_query idx
+  local out lower_query
+  local -a exact_match_indices=()
+  local -a exact_match_names=()
+  local -a partial_match_indices=()
+  local -a partial_match_names=()
 
   lower_query="$(printf "%s" "$query" | tr '[:upper:]' '[:lower:]')"
   out="$(audio_devices_output)"
 
-  idx="$(awk -v needle="$lower_query" '
+  while IFS=$'\t' read -r idx name; do
+    if [[ -z "$idx" || -z "$name" ]]; then
+      continue
+    fi
+
+    local lower_name
+    lower_name="$(printf "%s" "$name" | tr '[:upper:]' '[:lower:]')"
+
+    if [[ "$lower_name" == "$lower_query" ]]; then
+      exact_match_indices+=("$idx")
+      exact_match_names+=("$name")
+    elif [[ "$lower_name" == *"$lower_query"* ]]; then
+      partial_match_indices+=("$idx")
+      partial_match_names+=("$name")
+    fi
+  done < <(awk '
     /AVFoundation audio devices:/ {show=1; next}
     /AVFoundation video devices:/ {show=0}
     show && /AVFoundation indev/ {
-      line=tolower($0)
-      if (index(line, needle) > 0) {
-        if (match($0, /\[[0-9]+\]/)) {
-          print substr($0, RSTART + 1, RLENGTH - 2)
-          exit
+      if (match($0, /\[[0-9]+\]/)) {
+        idx = substr($0, RSTART + 1, RLENGTH - 2)
+        name = $0
+        sub(/^.*\[[0-9]+\] /, "", name)
+        if (length(name) > 0) {
+          printf "%s\t%s\n", idx, name
         }
       }
     }
-  ' <<<"$out")"
+  ' <<<"$out")
 
-  if [[ -z "$idx" ]]; then
+  if [[ "${#exact_match_indices[@]}" -gt 1 ]] || ([[ "${#exact_match_indices[@]}" -eq 0 ]] && [[ "${#partial_match_indices[@]}" -gt 1 ]]); then
+    echo "Multiple audio devices match --mic-name '$query':" >&2
+
+    local i
+    if [[ "${#exact_match_indices[@]}" -gt 1 ]]; then
+      for ((i = 0; i < ${#exact_match_indices[@]}; i++)); do
+        echo "  [${exact_match_indices[$i]}] ${exact_match_names[$i]}" >&2
+      done
+    else
+      for ((i = 0; i < ${#partial_match_indices[@]}; i++)); do
+        echo "  [${partial_match_indices[$i]}] ${partial_match_names[$i]}" >&2
+      done
+    fi
+
+    echo "Use --mic-index N or a more specific --mic-name." >&2
+    exit 11
+  fi
+
+  if [[ "${#exact_match_indices[@]}" -eq 1 ]]; then
+    MIC_INDEX="${exact_match_indices[0]}"
+  elif [[ "${#partial_match_indices[@]}" -eq 1 ]]; then
+    MIC_INDEX="${partial_match_indices[0]}"
+  else
     echo "No audio device matching --mic-name '$query'." >&2
     echo "Run goose-voice-ptt.sh --list-devices to inspect available indices." >&2
     exit 11
   fi
 
-  MIC_INDEX="$idx"
   echo "🎤 Selected mic index ${MIC_INDEX} from name match: ${query}"
 }
 
