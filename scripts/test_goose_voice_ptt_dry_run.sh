@@ -257,6 +257,72 @@ EOF
   pass "launcher emits concise fallback/error summaries for accessibility failures"
 }
 
+run_launcher_tmux_fallback_summary_smoke() {
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${@: -1}"
+mkdir -p "$(dirname "${out}")"
+printf "fake-audio" >"${out}"
+EOF
+  chmod +x "${fake_bin}/ffmpeg"
+
+  cat >"${fake_bin}/tmux" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  set-buffer)
+    exit 0
+    ;;
+  paste-buffer)
+    exit 1
+    ;;
+  send-keys)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+EOF
+  chmod +x "${fake_bin}/tmux"
+
+  local transcript_file="${tmp_dir}/launcher-tmux-fallback-transcript.txt"
+
+  set +e
+  local fallback_out
+  fallback_out="$(PATH="${fake_bin}:${PATH}" env TMUX=/tmp/fake-tmux "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode auto \
+    --provider command \
+    --transcribe-cmd 'printf "launcher tmux fallback smoke transcript\\n"' \
+    --transcript-file "${transcript_file}" 2>&1)"
+  local fallback_rc=$?
+  set -e
+
+  if [[ "${fallback_rc}" -ne 0 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "launcher tmux fallback smoke: expected rc 0, got ${fallback_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${fallback_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${fallback_out}" "⚠️  Voice fast path (tmux) failed; fell back to file bridge." "launcher tmux fallback smoke"
+  require_output_contains "${fallback_out}" "Hint: verify tmux session/target pane (use --tmux-target if needed)." "launcher tmux fallback smoke"
+  require_file_equals "${transcript_file}" "launcher tmux fallback smoke transcript" "launcher tmux fallback smoke"
+
+  rm -rf "${tmp_dir}"
+  pass "launcher emits concise tmux fallback summary with guidance"
+}
+
 run_launcher_tmux_error_summary_smoke() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
@@ -360,6 +426,7 @@ fi
 
 run_auto_mode_paste_fallback_smoke
 run_launcher_status_summary_smoke
+run_launcher_tmux_fallback_summary_smoke
 run_launcher_tmux_error_summary_smoke
 
 # Hold mode dry-run should surface preflight readiness details.

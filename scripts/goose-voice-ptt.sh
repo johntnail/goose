@@ -877,16 +877,19 @@ write_transcript_file() {
 
 insert_transcript_tmux() {
   local text="$1"
-  local -a target_args=()
-
-  if [[ -n "$TMUX_TARGET" ]]; then
-    target_args=(-t "$TMUX_TARGET")
-  fi
 
   tmux set-buffer -- "$text" || return 1
-  tmux paste-buffer -d "${target_args[@]}" || return 1
-  if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
-    tmux send-keys "${target_args[@]}" Enter || return 1
+
+  if [[ -n "$TMUX_TARGET" ]]; then
+    tmux paste-buffer -d -t "$TMUX_TARGET" || return 1
+    if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
+      tmux send-keys -t "$TMUX_TARGET" Enter || return 1
+    fi
+  else
+    tmux paste-buffer -d || return 1
+    if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
+      tmux send-keys Enter || return 1
+    fi
   fi
 
   echo "✅ Transcript pasted into tmux pane${TMUX_TARGET:+ ($TMUX_TARGET)}."
