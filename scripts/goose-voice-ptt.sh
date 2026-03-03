@@ -919,6 +919,8 @@ enforce_min_duration() {
   fi
 
   if awk -v duration="$clip_duration" -v minimum="$MIN_DURATION" 'BEGIN { exit (duration < minimum) ? 0 : 1 }'; then
+    STATUS_REASON="min_duration_too_short"
+    STATUS_DELIVERY_MODE="none"
     echo "Recording too short (${clip_duration}s < minimum ${MIN_DURATION}s). Tap/hold longer or set --min-duration 0 to disable this guard." >&2
     exit 15
   fi

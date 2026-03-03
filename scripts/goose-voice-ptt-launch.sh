@@ -42,6 +42,8 @@ status_guidance() {
       echo "   Hint: verify tmux session/target pane (use --tmux-target if needed)." ;;
     paste_key_event_blocked|auto_submit_key_event_blocked)
       echo "   Hint: focused app blocked synthetic key events; retry with --insert-mode file or adjust permissions/state." ;;
+    min_duration_too_short)
+      echo "   Hint: hold push-to-talk a bit longer, lower --min-duration, or disable the guard with --min-duration 0." ;;
     "")
       ;;
     *)

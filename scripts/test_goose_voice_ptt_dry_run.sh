@@ -1091,6 +1091,80 @@ EOF
   pass "launcher emits concise tmux failure summary with guidance"
 }
 
+run_min_duration_reason_smoke() {
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${@: -1}"
+mkdir -p "$(dirname "${out}")"
+printf "fake-audio" >"${out}"
+EOF
+  chmod +x "${fake_bin}/ffmpeg"
+
+  cat >"${fake_bin}/ffprobe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "0.10"
+EOF
+  chmod +x "${fake_bin}/ffprobe"
+
+  set +e
+  local status_out
+  status_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0.25 \
+    --insert-mode file \
+    --provider command \
+    --transcribe-cmd 'printf "min duration smoke transcript\\n"' \
+    --status-json 2>&1)"
+  local status_rc=$?
+  set -e
+
+  if [[ "${status_rc}" -ne 15 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "min-duration status-json smoke: expected rc 15, got ${status_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${status_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${status_out}" "Recording too short" "min-duration status-json smoke"
+  require_output_contains "${status_out}" "\"reason\":\"min_duration_too_short\"" "min-duration status-json smoke"
+
+  set +e
+  local launcher_out
+  launcher_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0.25 \
+    --insert-mode file \
+    --provider command \
+    --transcribe-cmd 'printf "min duration launcher transcript\\n"' 2>&1)"
+  local launcher_rc=$?
+  set -e
+
+  if [[ "${launcher_rc}" -ne 15 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "min-duration launcher smoke: expected rc 15, got ${launcher_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${launcher_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${launcher_out}" "❌ Voice run failed (delivery=none, reason=min_duration_too_short)." "min-duration launcher smoke"
+  require_output_contains "${launcher_out}" "Hint: hold push-to-talk a bit longer, lower --min-duration, or disable the guard with --min-duration 0." "min-duration launcher smoke"
+
+  rm -rf "${tmp_dir}"
+  pass "status-json and launcher expose min_duration_too_short reason"
+}
+
 run_reason_bucket_sync_smoke() {
   local docs_reasons=()
   while IFS= read -r reason; do
@@ -1208,6 +1282,7 @@ run_paste_reason_bucket_smoke
 run_target_not_frontmost_reason_smoke
 run_launcher_tmux_fallback_summary_smoke
 run_launcher_tmux_error_summary_smoke
+run_min_duration_reason_smoke
 run_reason_bucket_sync_smoke
 
 # Hold mode dry-run should surface preflight readiness details.

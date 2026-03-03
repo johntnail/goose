@@ -314,6 +314,7 @@ Speak to goose directly instead of typing your prompts.
         | `paste_key_event_blocked` | Cmd+V key event blocked by focused app state/policy | Try target terminal focus reset, then fallback to `--insert-mode file` if still blocked. |
         | `auto_submit_accessibility_unavailable` | Paste worked but Enter key injection blocked by missing accessibility permissions | Grant permissions, or disable `--auto-submit` and press Enter manually. |
         | `auto_submit_key_event_blocked` | Paste worked but Enter key injection blocked by app state | Keep `--auto-submit` off and submit manually, or switch to tmux/file mode. |
+        | `min_duration_too_short` | Recording clip was shorter than configured `--min-duration` guard | Hold push-to-talk longer, lower `--min-duration`, or set `--min-duration 0` to disable guard. |
 
         Practical non-tmux reliability tips:
         - Run `scripts/goose-voice-ptt.sh --dry-run --insert-mode auto --paste-app "YourTerminal"` once before sessions to confirm accessibility + focus targeting.
