@@ -5,6 +5,7 @@ import CoreGraphics
 enum Mode: String {
     case down
     case up
+    case preflight
 }
 
 struct Options {
@@ -31,7 +32,7 @@ func parseArgs() -> Options {
             i += 1
             guard i < args.count else { fail("missing value for --mode") }
             guard let mode = Mode(rawValue: args[i]) else {
-                fail("invalid --mode '\(args[i])' (expected down|up)")
+                fail("invalid --mode '\(args[i])' (expected down|up|preflight)")
             }
             opts.mode = mode
         case "--key-code":
@@ -58,9 +59,10 @@ func parseArgs() -> Options {
         case "-h", "--help":
             print("""
 Usage:
-  goose-voice-ptt-keywatch.swift --mode down|up [--key-code 49] [--timeout SEC] [--poll-ms 15]
+  goose-voice-ptt-keywatch.swift --mode down|up|preflight [--key-code 49] [--timeout SEC] [--poll-ms 15]
 
 Polls macOS key state using CoreGraphics.
+Mode preflight checks Input Monitoring readiness without waiting for key events.
 """)
             exit(0)
         default:
@@ -77,6 +79,17 @@ func isKeyDown(_ keyCode: CGKeyCode) -> Bool {
 }
 
 let opts = parseArgs()
+
+if opts.mode == .preflight {
+    if !CGPreflightListenEventAccess() {
+        fail("Input Monitoring access is not granted. Enable your terminal in System Settings → Privacy & Security → Input Monitoring.", code: 4)
+    }
+
+    _ = isKeyDown(opts.keyCode)
+    print("preflight-ok")
+    exit(0)
+}
+
 let sleepMicros = useconds_t(opts.pollMs * 1_000)
 let start = Date()
 
@@ -89,6 +102,8 @@ while true {
         done = down
     case .up:
         done = !down
+    case .preflight:
+        done = false
     }
 
     if done {

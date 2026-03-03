@@ -38,7 +38,7 @@ Options:
   --discard               record + transcribe but do not write transcript file
   --print-only            print transcript to stdout (implies --discard)
   --confirm               ask before writing transcript file (decline => discard)
-  --dry-run               validate config/tools and print resolved settings, then exit
+  --dry-run               validate config/tools, including hold-key preflight readiness, then exit
   -h, --help              show help
 
 Examples:
@@ -99,6 +99,10 @@ DRY_RUN=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYWATCH_SWIFT="${SCRIPT_DIR}/goose-voice-ptt-keywatch.swift"
 STATUS_LINES=0
+HOLD_KEY_CODE=""
+HOLD_PREFLIGHT_STATUS="n/a"
+HOLD_PREFLIGHT_DETAIL=""
+EFFECTIVE_PTT_MODE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -347,6 +351,30 @@ fallback_hold_unavailable() {
   record_interactive_enter
 }
 
+run_hold_preflight() {
+  local probe_out
+  if probe_out="$(swift "$KEYWATCH_SWIFT" --mode preflight --key-code "$HOLD_KEY_CODE" 2>&1)"; then
+    HOLD_PREFLIGHT_STATUS="ready"
+    HOLD_PREFLIGHT_DETAIL="${probe_out//$'\n'/ }"
+    return
+  fi
+
+  local probe_rc=$?
+  HOLD_PREFLIGHT_STATUS="unavailable (rc=${probe_rc})"
+  HOLD_PREFLIGHT_DETAIL="${probe_out//$'\n'/ }"
+
+  if [[ "$HOLD_STRICT" == "1" ]]; then
+    echo "Hold-key preflight failed (${HOLD_PREFLIGHT_DETAIL}). Re-run without --hold-strict to fall back to ENTER mode." >&2
+    exit 10
+  fi
+
+  EFFECTIVE_PTT_MODE="enter"
+
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    echo "⚠️  Hold-key preflight failed (${HOLD_PREFLIGHT_DETAIL}). Falling back to ENTER mode." >&2
+  fi
+}
+
 audio_devices_output() {
   ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 || true
 }
@@ -417,12 +445,16 @@ validate_seconds_arg "--max-duration" "$MAX_DURATION"
 validate_mode
 validate_insert_mode
 
+EFFECTIVE_PTT_MODE="$PTT_MODE"
 if [[ "$PTT_MODE" == "hold" ]]; then
   require_cmd swift
   if [[ ! -f "$KEYWATCH_SWIFT" ]]; then
     echo "Missing keywatch helper: $KEYWATCH_SWIFT" >&2
     exit 9
   fi
+
+  HOLD_KEY_CODE="$(ptt_key_to_code "$PTT_KEY")"
+  run_hold_preflight
 fi
 
 if [[ "$PROVIDER" == "local" ]]; then
@@ -441,6 +473,15 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "✅ goose-voice-ptt dry run: configuration looks valid"
   echo "   Mic index: ${MIC_INDEX}"
   echo "   PTT mode: ${PTT_MODE} (key: ${PTT_KEY})"
+  if [[ "$PTT_MODE" == "hold" ]]; then
+    echo "   Hold preflight: ${HOLD_PREFLIGHT_STATUS}"
+    if [[ -n "$HOLD_PREFLIGHT_DETAIL" ]]; then
+      echo "   Hold detail: ${HOLD_PREFLIGHT_DETAIL}"
+    fi
+    if [[ "$EFFECTIVE_PTT_MODE" != "$PTT_MODE" ]]; then
+      echo "   Effective PTT mode on real run: ${EFFECTIVE_PTT_MODE} (fallback)"
+    fi
+  fi
   echo "   Insert mode: ${INSERT_MODE} -> ${RESOLVED_INSERT_MODE}"
   if [[ "$RESOLVED_INSERT_MODE" == "tmux" ]]; then
     if [[ -n "$TMUX_TARGET" ]]; then
@@ -497,9 +538,7 @@ record_interactive_enter() {
 }
 
 record_interactive_hold() {
-  local key_code
-  key_code="$(ptt_key_to_code "$PTT_KEY")"
-
+  local key_code="${HOLD_KEY_CODE:-$(ptt_key_to_code "$PTT_KEY")}"
   status_line "🎙️  Hold ${PTT_KEY} to record (Ctrl+C cancels; max ${MAX_DURATION}s)."
 
   local down_msg
@@ -533,7 +572,7 @@ record_interactive_hold() {
 }
 
 record_interactive() {
-  if [[ "$PTT_MODE" == "hold" ]]; then
+  if [[ "$EFFECTIVE_PTT_MODE" == "hold" ]]; then
     record_interactive_hold
   else
     record_interactive_enter

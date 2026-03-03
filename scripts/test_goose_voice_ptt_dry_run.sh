@@ -80,6 +80,19 @@ AUTO_OUT="$(${VOICE_SCRIPT} --dry-run --insert-mode auto --provider command --tr
 require_output_contains "${AUTO_OUT}" "Insert mode: auto -> file" "auto dry-run"
 pass "auto insert-mode resolves to file when no tmux context"
 
+# Hold mode dry-run should surface preflight readiness details.
+HOLD_OUT="$(${VOICE_SCRIPT} --dry-run --ptt-mode hold --provider command --transcribe-cmd cat 2>&1)"
+require_output_contains "${HOLD_OUT}" "Hold preflight:" "hold dry-run"
+pass "hold-mode dry-run reports preflight readiness"
+
+if [[ "${HOLD_OUT}" == *"Hold preflight: unavailable"* ]]; then
+  run_failure_case "hold-strict fails when preflight is unavailable" 10 \
+    "${VOICE_SCRIPT}" --dry-run --ptt-mode hold --hold-strict --provider command --transcribe-cmd cat
+else
+  run_success_case "hold-strict dry-run succeeds when preflight is ready" \
+    "${VOICE_SCRIPT}" --dry-run --ptt-mode hold --hold-strict --provider command --transcribe-cmd cat
+fi
+
 # Invalid mode should fail fast with argument validation.
 run_failure_case "invalid --ptt-mode is rejected" 8 \
   "${VOICE_SCRIPT}" --dry-run --ptt-mode nope --provider command --transcribe-cmd cat
