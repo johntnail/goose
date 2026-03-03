@@ -12,6 +12,7 @@ pub(crate) struct DictationInsertion {
 /// Behavior intentionally mirrors desktop voice dictation:
 /// - strips parenthesized asides (e.g. "(background noise)")
 /// - trims whitespace
+/// - treats standalone cancel/discard phrases as no-op safety cancels
 /// - detects a trailing "submit" command (case-insensitive, with trailing punctuation)
 /// - strips that trailing submit marker from inserted text
 /// - appends to existing input with a single space
@@ -24,6 +25,11 @@ pub(crate) fn apply_dictation_transcript(
 
     // Match desktop behavior: ignore empty transcript after parenthetical cleanup.
     if filtered_text.is_empty() {
+        return None;
+    }
+
+    // Safety control: treat standalone cancel/discard directives as no-op.
+    if discard_only_re().is_match(filtered_text) {
         return None;
     }
 
@@ -61,6 +67,14 @@ fn submit_suffix_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(r"(?i)\bsubmit[.,!?;'\"\s]*$").expect("valid submit suffix regex")
+    })
+}
+
+fn discard_only_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)^(?:cancel|discard|never\s+mind)[.,!?;'\"\s]*$")
+            .expect("valid discard regex")
     })
 }
 
@@ -116,6 +130,25 @@ mod tests {
             out,
             DictationInsertion {
                 merged_text: "".to_string(),
+                auto_submit: false
+            }
+        );
+    }
+
+    #[test]
+    fn standalone_cancel_is_ignored() {
+        assert!(apply_dictation_transcript("draft", "cancel!!!").is_none());
+        assert!(apply_dictation_transcript("draft", "never mind").is_none());
+    }
+
+    #[test]
+    fn cancel_word_inside_sentence_is_not_ignored() {
+        let out =
+            apply_dictation_transcript("", "cancel the old plan and write a new one").unwrap();
+        assert_eq!(
+            out,
+            DictationInsertion {
+                merged_text: "cancel the old plan and write a new one".to_string(),
                 auto_submit: false
             }
         );
