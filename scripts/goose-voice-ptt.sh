@@ -29,6 +29,7 @@ Options:
   --transcript-file PATH  transcript output file (default noted above)
   --insert-mode MODE      transcript delivery: file|tmux|paste|auto (default: file)
   --tmux-target TARGET    tmux pane target for insert-mode tmux/auto
+  --paste-app NAME        paste mode: activate app before paste (e.g., "iTerm2")
   --auto-submit           file mode: append " submit"; tmux/paste mode: press ENTER after paste
   --clear-status          clear transient status lines before showing transcript
   --provider NAME         transcription provider: local|command (default: local)
@@ -69,6 +70,9 @@ Examples:
   # Paste into the currently focused macOS app (Terminal/iTerm/etc.)
   goose-voice-ptt.sh --insert-mode paste
 
+  # Paste into a specific app (activates it first)
+  goose-voice-ptt.sh --insert-mode paste --paste-app "iTerm2"
+
   # Custom command provider
   goose-voice-ptt.sh --provider command --transcribe-cmd 'my_transcriber'
 
@@ -88,6 +92,7 @@ HOLD_STRICT="${GOOSE_VOICE_HOLD_STRICT:-0}"
 TRANSCRIPT_FILE="${GOOSE_CLI_VOICE_TRANSCRIPT_FILE:-/tmp/goose-cli-voice-transcript.txt}"
 INSERT_MODE="${GOOSE_VOICE_INSERT_MODE:-file}"
 TMUX_TARGET="${GOOSE_VOICE_TMUX_TARGET:-}"
+PASTE_APP="${GOOSE_VOICE_PASTE_APP:-}"
 RESOLVED_INSERT_MODE="file"
 AUTO_SUBMIT=0
 CLEAR_STATUS=0
@@ -165,6 +170,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tmux-target)
       TMUX_TARGET="${2:-}"
+      shift 2
+      ;;
+    --paste-app)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "--paste-app requires an application name, e.g. --paste-app \"iTerm2\"." >&2
+        exit 8
+      fi
+      PASTE_APP="${2}"
       shift 2
       ;;
     --auto-submit)
@@ -308,6 +321,44 @@ can_use_macos_paste() {
   [[ "$(uname -s)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1 && command -v osascript >/dev/null 2>&1
 }
 
+system_events_accessible() {
+  local check_log
+  local check_pid
+  local checks=0
+
+  check_log="$(mktemp)"
+  osascript >"$check_log" 2>&1 <<'APPLESCRIPT' &
+tell application "System Events"
+  count every process
+end tell
+APPLESCRIPT
+  check_pid=$!
+
+  while kill -0 "$check_pid" >/dev/null 2>&1; do
+    checks=$((checks + 1))
+    if [[ "$checks" -ge 20 ]]; then
+      kill -TERM "$check_pid" >/dev/null 2>&1 || true
+      wait "$check_pid" >/dev/null 2>&1 || true
+      rm -f "$check_log"
+      return 1
+    fi
+    sleep 0.1
+  done
+
+  wait "$check_pid" >/dev/null 2>&1
+  local rc=$?
+  rm -f "$check_log"
+  return "$rc"
+}
+
+frontmost_app_name() {
+  osascript 2>/dev/null <<'APPLESCRIPT'
+tell application "System Events"
+  name of first application process whose frontmost is true
+end tell
+APPLESCRIPT
+}
+
 validate_insert_mode() {
   case "$INSERT_MODE" in
     file)
@@ -342,6 +393,11 @@ validate_insert_mode() {
       exit 13
       ;;
   esac
+
+  if [[ -n "$PASTE_APP" && "$INSERT_MODE" != "paste" && "$INSERT_MODE" != "auto" ]]; then
+    echo "--paste-app requires --insert-mode paste|auto." >&2
+    exit 13
+  fi
 }
 
 is_non_negative_integer() {
@@ -536,9 +592,20 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
       echo "   tmux target: current pane"
     fi
   elif [[ "$RESOLVED_INSERT_MODE" == "paste" ]]; then
-    echo "   Paste target: currently focused macOS app"
+    if [[ -n "$PASTE_APP" ]]; then
+      echo "   Paste target: ${PASTE_APP} (activated before paste)"
+    else
+      echo "   Paste target: currently focused macOS app"
+    fi
   else
     echo "   Transcript file: ${TRANSCRIPT_FILE}"
+  fi
+  if [[ "$RESOLVED_INSERT_MODE" == "paste" ]]; then
+    if system_events_accessible; then
+      echo "   Accessibility (System Events): ready"
+    else
+      echo "   Accessibility (System Events): unavailable (grant Accessibility/Input Monitoring to terminal + osascript host)"
+    fi
   fi
   echo "   Provider: ${PROVIDER}"
   if [[ "$PROVIDER" == "local" ]]; then
@@ -687,8 +754,35 @@ insert_transcript_tmux() {
   fi
 }
 
+activate_target_app_for_paste() {
+  local target_app="$1"
+
+  osascript "$target_app" >/dev/null 2>&1 <<'APPLESCRIPT'
+on run argv
+  set targetApp to item 1 of argv
+  tell application targetApp to activate
+  delay 0.08
+end run
+APPLESCRIPT
+}
+
 insert_transcript_paste() {
   local text="$1"
+  local frontmost_before=""
+  local target_label="focused app"
+
+  if [[ -n "$PASTE_APP" ]]; then
+    if ! activate_target_app_for_paste "$PASTE_APP"; then
+      echo "Failed to activate paste target app '$PASTE_APP'. Verify app name and that it is installed/running." >&2
+      return 1
+    fi
+    target_label="$PASTE_APP"
+  else
+    frontmost_before="$(frontmost_app_name || true)"
+    if [[ -n "$frontmost_before" ]]; then
+      target_label="$frontmost_before"
+    fi
+  fi
 
   printf "%s" "$text" | pbcopy
 
@@ -698,7 +792,17 @@ tell application "System Events"
 end tell
 APPLESCRIPT
   then
-    echo "Focused-app paste failed (System Events permission or frontmost app issue)." >&2
+    if ! system_events_accessible; then
+      echo "Focused-app paste failed: System Events is not accessible. Grant Accessibility/Input Monitoring permissions to your terminal and osascript host." >&2
+    fi
+
+    local frontmost_after
+    frontmost_after="$(frontmost_app_name || true)"
+    if [[ -n "$frontmost_after" ]]; then
+      echo "Focused-app paste failed (frontmost app: ${frontmost_after})." >&2
+    else
+      echo "Focused-app paste failed (could not determine frontmost app)." >&2
+    fi
     return 1
   fi
 
@@ -709,12 +813,16 @@ tell application "System Events"
 end tell
 APPLESCRIPT
     then
-      echo "Paste succeeded but auto-submit ENTER failed (System Events permission issue)." >&2
+      if ! system_events_accessible; then
+        echo "Paste succeeded but auto-submit ENTER failed: System Events is not accessible. Grant Accessibility/Input Monitoring permissions." >&2
+      else
+        echo "Paste succeeded but auto-submit ENTER failed (System Events key event blocked by focused app permissions/state)." >&2
+      fi
       return 1
     fi
   fi
 
-  echo "✅ Transcript pasted into focused app via clipboard."
+  echo "✅ Transcript pasted into ${target_label} via clipboard."
   if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
     echo "   Auto-submit requested via ENTER key."
   fi
@@ -769,7 +877,11 @@ if [[ "$CONFIRM" -eq 1 ]]; then
     if [[ "$RESOLVED_INSERT_MODE" == "tmux" ]]; then
       local_target="active tmux pane"
     elif [[ "$RESOLVED_INSERT_MODE" == "paste" ]]; then
-      local_target="focused macOS app"
+      if [[ -n "$PASTE_APP" ]]; then
+        local_target="${PASTE_APP}"
+      else
+        local_target="focused macOS app"
+      fi
     fi
 
     echo

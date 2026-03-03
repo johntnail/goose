@@ -278,6 +278,7 @@ Speak to goose directly instead of typing your prompts.
         - `--mic-name "TEXT"` to select first matching microphone name (case-insensitive)
         - `--insert-mode file|tmux|paste|auto` to force/choose transcript delivery mode
         - `--tmux-target pane` to paste into a specific tmux pane/window
+        - `--paste-app "iTerm2"` to activate a specific macOS app before focused-app paste
         - `--auto-submit` to send immediately after insertion
         - `--max-duration SEC` for a hard safety cap
         - `--discard` / `--print-only` for safe dry runs
@@ -289,7 +290,8 @@ Speak to goose directly instead of typing your prompts.
         - If hold-key permissions are unavailable, Goose prints a warning and falls back to ENTER mode by default.
         - Add `--hold-strict` to fail fast instead of falling back when hold-key mode is unavailable.
         - When `--duration SEC` is set, fixed-duration capture takes priority and hold-key readiness checks are skipped.
-        - Focused-app paste mode (`--insert-mode paste` or auto on macOS) may require Accessibility permissions for `System Events`; on failure, auto mode falls back to transcript-file prefill.
+        - Focused-app paste mode (`--insert-mode paste` or auto on macOS) may require Accessibility permissions for `System Events`; dry-run now reports accessibility readiness, and auto mode falls back to transcript-file prefill on paste failure.
+        - If paste lands in the wrong app/window, set `--paste-app "iTerm2"` (or your terminal app name) to activate the target app before Cmd+V.
 
         Cost/rate-limit posture vs Claude Code voice:
         - Local mode (`--provider local`) runs on-device with `whisper-cli` (no cloud API cost).

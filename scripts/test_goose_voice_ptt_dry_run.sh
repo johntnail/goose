@@ -88,7 +88,12 @@ if can_use_macos_paste; then
   PASTE_OUT="$(${VOICE_SCRIPT} --dry-run --insert-mode paste --provider command --transcribe-cmd cat 2>&1)"
   require_output_contains "${PASTE_OUT}" "Insert mode: paste -> paste" "paste dry-run"
   require_output_contains "${PASTE_OUT}" "Paste target: currently focused macOS app" "paste dry-run"
+  require_output_contains "${PASTE_OUT}" "Accessibility (System Events):" "paste dry-run"
   pass "explicit paste mode dry-run succeeds on supported macOS hosts"
+
+  PASTE_APP_OUT="$(${VOICE_SCRIPT} --dry-run --insert-mode paste --paste-app iTerm2 --provider command --transcribe-cmd cat 2>&1)"
+  require_output_contains "${PASTE_APP_OUT}" "Paste target: iTerm2 (activated before paste)" "paste-app dry-run"
+  pass "paste mode reports explicit --paste-app target"
 else
   require_output_contains "${AUTO_OUT}" "Insert mode: auto -> file" "auto dry-run"
   pass "auto insert-mode resolves to file when no tmux/paste fast path is available"
@@ -128,6 +133,9 @@ run_failure_case "invalid --duration is rejected" 8 \
 
 run_failure_case "invalid --max-duration is rejected" 8 \
   "${VOICE_SCRIPT}" --dry-run --max-duration 0 --provider command --transcribe-cmd cat
+
+run_failure_case "--paste-app requires insert-mode paste|auto" 13 \
+  "${VOICE_SCRIPT}" --dry-run --insert-mode file --paste-app iTerm2 --provider command --transcribe-cmd cat
 
 if command -v tmux >/dev/null 2>&1; then
   # For tmux mode, missing session/target should fail with a clear code.
