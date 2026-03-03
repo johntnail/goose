@@ -38,6 +38,7 @@ Options:
   --discard               record + transcribe but do not write transcript file
   --print-only            print transcript to stdout (implies --discard)
   --confirm               ask before writing transcript file (decline => discard)
+  --dry-run               validate config/tools and print resolved settings, then exit
   -h, --help              show help
 
 Examples:
@@ -67,6 +68,9 @@ Examples:
 
   # Custom command provider
   goose-voice-ptt.sh --provider command --transcribe-cmd 'my_transcriber'
+
+  # Validate setup and show resolved insertion/transcript targets without recording
+  goose-voice-ptt.sh --dry-run
 EOF
 }
 
@@ -91,6 +95,7 @@ TRANSCRIBE_CMD="${GOOSE_VOICE_TRANSCRIBE_CMD:-}"
 DISCARD=0
 PRINT_ONLY=0
 CONFIRM=0
+DRY_RUN=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYWATCH_SWIFT="${SCRIPT_DIR}/goose-voice-ptt-keywatch.swift"
 STATUS_LINES=0
@@ -176,6 +181,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --confirm)
       CONFIRM=1
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
       shift
       ;;
     -h|--help)
@@ -383,6 +392,33 @@ elif [[ "$PROVIDER" == "command" ]]; then
 else
   echo "Unsupported provider: $PROVIDER (expected local|command)" >&2
   exit 3
+fi
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "✅ goose-voice-ptt dry run: configuration looks valid"
+  echo "   Mic index: ${MIC_INDEX}"
+  echo "   PTT mode: ${PTT_MODE} (key: ${PTT_KEY})"
+  echo "   Insert mode: ${INSERT_MODE} -> ${RESOLVED_INSERT_MODE}"
+  if [[ "$RESOLVED_INSERT_MODE" == "tmux" ]]; then
+    if [[ -n "$TMUX_TARGET" ]]; then
+      echo "   tmux target: ${TMUX_TARGET}"
+    else
+      echo "   tmux target: current pane"
+    fi
+  else
+    echo "   Transcript file: ${TRANSCRIPT_FILE}"
+  fi
+  echo "   Provider: ${PROVIDER}"
+  if [[ "$PROVIDER" == "local" ]]; then
+    echo "   Model: ${MODEL_PATH}"
+    echo "   Language: ${LANG}"
+  else
+    echo "   Command: ${TRANSCRIBE_CMD}"
+  fi
+  echo "   Auto-submit: ${AUTO_SUBMIT}"
+  echo "   Clear status: ${CLEAR_STATUS}"
+  echo "   Confirm before insert: ${CONFIRM}"
+  exit 0
 fi
 
 WORK_DIR="$(mktemp -d)"
