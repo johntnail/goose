@@ -136,7 +136,8 @@ EOF
     --insert-mode auto \
     --provider command \
     --transcribe-cmd 'printf "fallback smoke transcript\\n"' \
-    --transcript-file "${transcript_file}" 2>&1)"
+    --transcript-file "${transcript_file}" \
+    --status-json 2>&1)"
   local rc=$?
   set -e
 
@@ -152,6 +153,10 @@ EOF
   require_output_contains "${out}" "Focused-app paste failed; falling back to transcript file mode." "auto-mode paste fallback smoke"
   require_output_contains "${out}" "GOOSE_VOICE_PASTE_FAILURE_REASON=accessibility_unavailable" "auto-mode paste fallback smoke"
   require_output_contains "${out}" "✅ Transcript saved to: ${transcript_file}" "auto-mode paste fallback smoke"
+  require_output_contains "${out}" "GOOSE_VOICE_STATUS_JSON=" "auto-mode paste fallback smoke"
+  require_output_contains "${out}" "\"outcome\":\"ok_fallback\"" "auto-mode paste fallback smoke"
+  require_output_contains "${out}" "\"fallback_from\":\"paste\"" "auto-mode paste fallback smoke"
+  require_output_contains "${out}" "\"delivery_mode\":\"file\"" "auto-mode paste fallback smoke"
   require_file_equals "${transcript_file}" "fallback smoke transcript" "auto-mode paste fallback smoke"
 
   rm -rf "${tmp_dir}"
@@ -165,6 +170,13 @@ DEFAULT_OUT="$("${BASE_CMD[@]}" 2>&1)"
 require_output_contains "${DEFAULT_OUT}" "Insert mode: file -> file" "default dry-run"
 require_output_contains "${DEFAULT_OUT}" "Min clip duration: 0.25s" "default dry-run"
 pass "default dry-run (file mode)"
+
+STATUS_DRY_OUT="$(${VOICE_SCRIPT} --dry-run --status-json --provider command --transcribe-cmd cat 2>&1)"
+require_output_contains "${STATUS_DRY_OUT}" "GOOSE_VOICE_STATUS_JSON=" "status-json dry-run"
+require_output_contains "${STATUS_DRY_OUT}" "\"phase\":\"dry-run\"" "status-json dry-run"
+require_output_contains "${STATUS_DRY_OUT}" "\"outcome\":\"dry_run_ok\"" "status-json dry-run"
+require_output_contains "${STATUS_DRY_OUT}" "\"insert_mode_resolved\":\"file\"" "status-json dry-run"
+pass "status-json emits machine-parseable dry-run summary"
 
 # Auto mode without tmux context should resolve to paste on supported macOS hosts, else file.
 AUTO_OUT="$(${VOICE_SCRIPT} --dry-run --insert-mode auto --provider command --transcribe-cmd cat 2>&1)"

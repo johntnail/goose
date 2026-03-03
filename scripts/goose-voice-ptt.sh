@@ -42,6 +42,7 @@ Options:
   --print-only            print transcript to stdout (implies --discard)
   --confirm               ask before writing transcript file (decline => discard)
   --dry-run               validate config/tools, including hold-key preflight readiness, then exit
+  --status-json           emit one machine-parseable status JSON line on exit
   -h, --help              show help
 
 Examples:
@@ -83,6 +84,9 @@ Examples:
 
   # Validate setup and show resolved insertion/transcript targets without recording
   goose-voice-ptt.sh --dry-run
+
+  # Emit a machine-parseable status JSON line (for wrappers/automation)
+  goose-voice-ptt.sh --dry-run --status-json
 EOF
 }
 
@@ -110,6 +114,7 @@ DISCARD=0
 PRINT_ONLY=0
 CONFIRM=0
 DRY_RUN=0
+STATUS_JSON=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYWATCH_SWIFT="${SCRIPT_DIR}/goose-voice-ptt-keywatch.swift"
 STATUS_LINES=0
@@ -120,6 +125,11 @@ EFFECTIVE_PTT_MODE=""
 RECORD_MODE="interactive"
 WORK_DIR=""
 PASTE_FAILURE_REASON=""
+STATUS_PHASE="run"
+STATUS_OUTCOME="running"
+STATUS_DELIVERY_MODE=""
+STATUS_FALLBACK_FROM=""
+STATUS_REASON=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -236,6 +246,10 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=1
       shift
       ;;
+    --status-json)
+      STATUS_JSON=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -282,10 +296,64 @@ clear_status_lines() {
   STATUS_LINES=0
 }
 
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/ }"
+  value="${value//$'\r'/ }"
+  value="${value//$'\t'/ }"
+  echo "$value"
+}
+
+emit_status_json() {
+  local exit_code="$1"
+
+  if [[ "$STATUS_JSON" -ne 1 ]]; then
+    return
+  fi
+
+  local outcome="$STATUS_OUTCOME"
+  if [[ "$outcome" == "running" ]]; then
+    if [[ "$exit_code" -eq 0 ]]; then
+      outcome="ok"
+    else
+      outcome="error"
+    fi
+  fi
+
+  local reason="$STATUS_REASON"
+  if [[ -z "$reason" && -n "$PASTE_FAILURE_REASON" ]]; then
+    reason="$PASTE_FAILURE_REASON"
+  fi
+
+  local delivery_mode="$STATUS_DELIVERY_MODE"
+  if [[ -z "$delivery_mode" ]]; then
+    delivery_mode="$RESOLVED_INSERT_MODE"
+  fi
+
+  local json
+  json=$(printf '{"phase":"%s","outcome":"%s","exit_code":%s,"insert_mode_requested":"%s","insert_mode_resolved":"%s","delivery_mode":"%s","fallback_from":"%s","reason":"%s","provider":"%s","record_mode":"%s"}' \
+    "$(json_escape "$STATUS_PHASE")" \
+    "$(json_escape "$outcome")" \
+    "$exit_code" \
+    "$(json_escape "$INSERT_MODE")" \
+    "$(json_escape "$RESOLVED_INSERT_MODE")" \
+    "$(json_escape "$delivery_mode")" \
+    "$(json_escape "$STATUS_FALLBACK_FROM")" \
+    "$(json_escape "$reason")" \
+    "$(json_escape "$PROVIDER")" \
+    "$(json_escape "$RECORD_MODE")")
+
+  echo "GOOSE_VOICE_STATUS_JSON=${json}" >&2
+}
+
 cleanup_on_exit() {
   local exit_code=$?
 
   clear_status_lines || true
+
+  emit_status_json "$exit_code" || true
 
   if [[ -n "${WORK_DIR:-}" && -d "${WORK_DIR:-}" ]]; then
     rm -rf "$WORK_DIR"
@@ -607,6 +675,10 @@ if awk -v value="$MIN_DURATION" 'BEGIN { exit (value > 0) ? 0 : 1 }'; then
 fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
+  STATUS_PHASE="dry-run"
+  STATUS_OUTCOME="dry_run_ok"
+  STATUS_DELIVERY_MODE="$RESOLVED_INSERT_MODE"
+
   echo "✅ goose-voice-ptt dry run: configuration looks valid"
   echo "   Mic index: ${MIC_INDEX}"
   if [[ "$RECORD_MODE" == "fixed" ]]; then
@@ -948,11 +1020,15 @@ if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
 fi
 
 if [[ "$PRINT_ONLY" -eq 1 ]]; then
+  STATUS_OUTCOME="printed"
+  STATUS_DELIVERY_MODE="stdout"
   echo "$TRANSCRIPT"
   exit 0
 fi
 
 if [[ "$DISCARD" -eq 1 ]]; then
+  STATUS_OUTCOME="discarded"
+  STATUS_DELIVERY_MODE="discard"
   echo "🗑️  Discarded transcript (not written)."
   echo "$TRANSCRIPT"
   exit 0
@@ -977,6 +1053,8 @@ if [[ "$CONFIRM" -eq 1 ]]; then
       y|yes)
         ;;
       *)
+        STATUS_OUTCOME="discarded_confirm"
+        STATUS_DELIVERY_MODE="discard"
         echo "🗑️  Discarded transcript (confirmation declined)."
         echo "$TRANSCRIPT"
         exit 0
@@ -990,26 +1068,46 @@ fi
 
 if [[ "$RESOLVED_INSERT_MODE" == "tmux" ]]; then
   if ! insert_transcript_tmux "$TRANSCRIPT"; then
+    STATUS_REASON="tmux_insert_failed"
     if [[ "$INSERT_MODE" == "tmux" ]]; then
+      STATUS_OUTCOME="error"
+      STATUS_DELIVERY_MODE="tmux"
       echo "tmux insertion failed; rerun with --insert-mode file or fix tmux target/session." >&2
       exit 14
     fi
 
+    STATUS_OUTCOME="ok_fallback"
+    STATUS_FALLBACK_FROM="tmux"
+    STATUS_DELIVERY_MODE="file"
     echo "⚠️  tmux insertion failed; falling back to transcript file mode." >&2
     write_transcript_file "$FILE_TRANSCRIPT"
+  else
+    STATUS_OUTCOME="ok"
+    STATUS_DELIVERY_MODE="tmux"
   fi
 elif [[ "$RESOLVED_INSERT_MODE" == "paste" ]]; then
   if ! insert_transcript_paste "$TRANSCRIPT"; then
     paste_reason="${PASTE_FAILURE_REASON:-unknown}"
+    STATUS_REASON="$paste_reason"
     if [[ "$INSERT_MODE" == "paste" ]]; then
+      STATUS_OUTCOME="error"
+      STATUS_DELIVERY_MODE="paste"
       echo "Focused-app paste failed (reason: ${paste_reason}); rerun with --insert-mode file or grant Accessibility permissions." >&2
       exit 14
     fi
 
+    STATUS_OUTCOME="ok_fallback"
+    STATUS_FALLBACK_FROM="paste"
+    STATUS_DELIVERY_MODE="file"
     echo "⚠️  Focused-app paste failed; falling back to transcript file mode. (reason: ${paste_reason})" >&2
     write_transcript_file "$FILE_TRANSCRIPT"
+  else
+    STATUS_OUTCOME="ok"
+    STATUS_DELIVERY_MODE="paste"
   fi
 else
+  STATUS_OUTCOME="ok"
+  STATUS_DELIVERY_MODE="file"
   write_transcript_file "$FILE_TRANSCRIPT"
 fi
 
