@@ -149,7 +149,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --mic-name)
-      MIC_NAME="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--mic-name requires a device name match string, e.g. --mic-name \"MacBook Pro Microphone\"." >&2
+        exit 8
+      fi
+      MIC_NAME="${2}"
       shift 2
       ;;
     --list-devices)
@@ -181,11 +185,19 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --ptt-mode)
-      PTT_MODE="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--ptt-mode requires enter or hold." >&2
+        exit 8
+      fi
+      PTT_MODE="${2}"
       shift 2
       ;;
     --ptt-key)
-      PTT_KEY="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--ptt-key requires a key name or keycode, e.g. --ptt-key space." >&2
+        exit 8
+      fi
+      PTT_KEY="${2}"
       shift 2
       ;;
     --hold-strict)
@@ -193,15 +205,27 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --transcript-file)
-      TRANSCRIPT_FILE="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--transcript-file requires a writable file path." >&2
+        exit 8
+      fi
+      TRANSCRIPT_FILE="${2}"
       shift 2
       ;;
     --insert-mode)
-      INSERT_MODE="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--insert-mode requires file|tmux|paste|auto." >&2
+        exit 8
+      fi
+      INSERT_MODE="${2}"
       shift 2
       ;;
     --tmux-target)
-      TMUX_TARGET="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--tmux-target requires a pane target, e.g. dev:1.1." >&2
+        exit 8
+      fi
+      TMUX_TARGET="${2}"
       shift 2
       ;;
     --paste-app)
@@ -221,19 +245,35 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --provider)
-      PROVIDER="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--provider requires local or command." >&2
+        exit 8
+      fi
+      PROVIDER="${2}"
       shift 2
       ;;
     --model)
-      MODEL_PATH="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--model requires a model path." >&2
+        exit 8
+      fi
+      MODEL_PATH="${2}"
       shift 2
       ;;
     --lang)
-      LANG="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--lang requires a language code, e.g. en." >&2
+        exit 8
+      fi
+      LANG="${2}"
       shift 2
       ;;
     --transcribe-cmd)
-      TRANSCRIBE_CMD="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--transcribe-cmd requires a command string." >&2
+        exit 8
+      fi
+      TRANSCRIBE_CMD="${2}"
       shift 2
       ;;
     --discard)

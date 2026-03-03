@@ -1233,6 +1233,18 @@ pass "fixed-duration mode bypasses hold preflight checks"
 run_failure_case "invalid --ptt-mode is rejected" 8 \
   "${VOICE_SCRIPT}" --dry-run --ptt-mode nope --provider command --transcribe-cmd cat
 
+run_failure_case "missing --ptt-mode value is rejected" 8 \
+  "${VOICE_SCRIPT}" --dry-run --ptt-mode --provider command --transcribe-cmd cat
+
+run_failure_case "missing --mic-name value is rejected" 8 \
+  "${VOICE_SCRIPT}" --dry-run --mic-name --provider command --transcribe-cmd cat
+
+run_failure_case "missing --provider value is rejected" 8 \
+  "${VOICE_SCRIPT}" --dry-run --provider --transcribe-cmd cat
+
+run_failure_case "missing --transcribe-cmd value is rejected" 8 \
+  "${VOICE_SCRIPT}" --dry-run --provider command --transcribe-cmd --insert-mode file
+
 run_failure_case "invalid --mic-index is rejected" 8 \
   "${VOICE_SCRIPT}" --dry-run --mic-index -1 --provider command --transcribe-cmd cat
 
