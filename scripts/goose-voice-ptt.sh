@@ -13,6 +13,7 @@ Defaults:
   - Local transcription via whisper.cpp (`whisper-cli`)
   - Transcript delivery: file mode (`--insert-mode file`) to Goose transcript bridge
   - Transcript file: $GOOSE_CLI_VOICE_TRANSCRIPT_FILE or /tmp/goose-cli-voice-transcript.txt
+    (set GOOSE_VOICE_SESSION_KEY or --session-key for deterministic per-session defaults)
   - Interactive record mode: press ENTER to start, ENTER to stop
   - Max duration guard in interactive mode: 30s
   - Minimum clip duration guard: 0.25s (0 disables)
@@ -29,6 +30,7 @@ Options:
   --ptt-key KEY           hold mode key: space|enter|return|left_shift|right_shift or keycode int (default: space)
   --hold-strict           fail instead of falling back when hold-key detection is unavailable
   --transcript-file PATH  transcript output file (default noted above)
+  --session-key KEY       derive deterministic transcript file from KEY when transcript path is not set
   --insert-mode MODE      transcript delivery: file|tmux|paste|auto (default: file)
   --tmux-target TARGET    tmux pane target for insert-mode tmux/auto
   --paste-app NAME        paste mode: activate app before paste (e.g., "iTerm2"); in auto mode, prefers paste path
@@ -73,6 +75,9 @@ Examples:
 
   # Use a custom transcript path for an active Goose session
   goose-voice-ptt.sh --transcript-file /tmp/goose-voice.txt
+
+  # Use deterministic per-session defaults across terminals
+  goose-voice-ptt.sh --session-key demo
 
   # Paste directly into the current tmux pane's active Goose prompt
   goose-voice-ptt.sh --insert-mode tmux
@@ -120,7 +125,8 @@ MIN_DURATION="${GOOSE_VOICE_MIN_DURATION:-0.25}"
 PTT_MODE="${GOOSE_VOICE_PTT_MODE:-enter}"
 PTT_KEY="${GOOSE_VOICE_PTT_KEY:-space}"
 HOLD_STRICT="${GOOSE_VOICE_HOLD_STRICT:-0}"
-TRANSCRIPT_FILE="${GOOSE_CLI_VOICE_TRANSCRIPT_FILE:-/tmp/goose-cli-voice-transcript.txt}"
+TRANSCRIPT_FILE="${GOOSE_CLI_VOICE_TRANSCRIPT_FILE:-}"
+SESSION_KEY_OVERRIDE="${GOOSE_VOICE_SESSION_KEY:-}"
 INSERT_MODE="${GOOSE_VOICE_INSERT_MODE:-file}"
 TMUX_TARGET="${GOOSE_VOICE_TMUX_TARGET:-}"
 PASTE_APP="${GOOSE_VOICE_PASTE_APP:-}"
@@ -231,6 +237,14 @@ while [[ $# -gt 0 ]]; do
         exit 8
       fi
       TRANSCRIPT_FILE="${2}"
+      shift 2
+      ;;
+    --session-key)
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--session-key requires a non-empty identifier, e.g. --session-key demo." >&2
+        exit 8
+      fi
+      SESSION_KEY_OVERRIDE="${2}"
       shift 2
       ;;
     --insert-mode)
@@ -360,7 +374,9 @@ require_cmd() {
 default_session_key() {
   local raw=""
 
-  if [[ -n "${TMUX_PANE:-}" ]]; then
+  if [[ -n "$SESSION_KEY_OVERRIDE" ]]; then
+    raw="$SESSION_KEY_OVERRIDE"
+  elif [[ -n "${TMUX_PANE:-}" ]]; then
     raw="tmux_${TMUX_PANE}"
   else
     local tty_path
@@ -374,7 +390,13 @@ default_session_key() {
     raw="pid_${PPID:-$$}"
   fi
 
-  printf "%s" "$raw" | tr '/: ' '___' | tr -cd 'A-Za-z0-9._-'
+  local sanitized
+  sanitized="$(printf "%s" "$raw" | tr '/: ' '___' | tr -cd 'A-Za-z0-9._-')"
+  if [[ -z "$sanitized" ]]; then
+    sanitized="pid_${PPID:-$$}"
+  fi
+
+  printf "%s" "$sanitized"
 }
 
 default_session_transcript_file() {
@@ -385,9 +407,12 @@ default_session_transcript_file() {
 
 print_session_env() {
   local transcript_path
+  local session_key
+  session_key="$(default_session_key)"
   transcript_path="$(default_session_transcript_file)"
 
   cat <<EOF
+export GOOSE_VOICE_SESSION_KEY="${session_key}"
 export GOOSE_CLI_VOICE_TRANSCRIPT_FILE="${transcript_path}"
 export GOOSE_VOICE_PROVIDER="${PROVIDER}"
 export GOOSE_VOICE_MODEL="${MODEL_PATH}"
@@ -812,6 +837,14 @@ if [[ "$PRINT_SESSION_ENV" -eq 1 ]]; then
   exit 0
 fi
 
+if [[ -z "$TRANSCRIPT_FILE" ]]; then
+  if [[ -n "$SESSION_KEY_OVERRIDE" ]]; then
+    TRANSCRIPT_FILE="$(default_session_transcript_file)"
+  else
+    TRANSCRIPT_FILE="/tmp/goose-cli-voice-transcript.txt"
+  fi
+fi
+
 require_cmd ffmpeg
 
 if [[ "$LIST_DEVICES" -eq 1 ]]; then
@@ -923,6 +956,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     fi
   else
     echo "   Transcript file: ${TRANSCRIPT_FILE}"
+    if [[ -n "$SESSION_KEY_OVERRIDE" ]]; then
+      echo "   Session key: $(default_session_key)"
+    fi
   fi
   if [[ "$RESOLVED_INSERT_MODE" == "paste" ]]; then
     if system_events_accessible; then

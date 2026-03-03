@@ -292,7 +292,8 @@ Speak to goose directly instead of typing your prompts.
         - `--provider local|command` with `--model`, `--lang`, and either:
           - `--transcribe-cmd` (legacy shell-string command mode), or
           - `--transcribe-bin` + repeatable `--transcribe-arg` (safer argv mode)
-        - `--print-session-env` to emit per-session exports for transcript path isolation (run via `eval "$(scripts/goose-voice-ptt.sh --print-session-env)"`)
+        - `--print-session-env` to emit per-session exports for transcript path isolation (run via `eval "$(scripts/goose-voice-ptt.sh --print-session-env --session-key demo)"`)
+        - `--session-key KEY` to derive deterministic transcript-file defaults across terminals without manually passing `--transcript-file`
 
         Troubleshooting and preflight:
         - Run `scripts/goose-voice-ptt.sh --dry-run --ptt-mode hold` before your first session to verify keywatch/accessibility readiness.

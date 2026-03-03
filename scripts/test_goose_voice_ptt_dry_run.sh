@@ -1269,9 +1269,20 @@ done
 pass "reason-buckets command emits canonical machine-readable reason list"
 
 SESSION_ENV_OUT="$(${VOICE_SCRIPT} --print-session-env 2>&1)"
+require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_VOICE_SESSION_KEY=" "print-session-env"
 require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=" "print-session-env"
 require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_VOICE_PROVIDER=" "print-session-env"
 pass "print-session-env emits per-session export hints"
+
+SESSION_KEY_DRY_OUT="$(GOOSE_VOICE_SESSION_KEY='demo-room' ${VOICE_SCRIPT} --dry-run --provider command --transcribe-cmd cat 2>&1)"
+require_output_contains "${SESSION_KEY_DRY_OUT}" "Transcript file: /tmp/goose-cli-voice-transcript-demo-room.txt" "session-key env dry-run"
+require_output_contains "${SESSION_KEY_DRY_OUT}" "Session key: demo-room" "session-key env dry-run"
+pass "session-key env derives deterministic transcript path"
+
+SESSION_KEY_FLAG_DRY_OUT="$(${VOICE_SCRIPT} --dry-run --session-key focused-room --provider command --transcribe-cmd cat 2>&1)"
+require_output_contains "${SESSION_KEY_FLAG_DRY_OUT}" "Transcript file: /tmp/goose-cli-voice-transcript-focused-room.txt" "session-key flag dry-run"
+require_output_contains "${SESSION_KEY_FLAG_DRY_OUT}" "Session key: focused-room" "session-key flag dry-run"
+pass "--session-key overrides transcript path deterministically"
 
 ARGV_DRY_OUT="$(${VOICE_SCRIPT} --dry-run --provider command --transcribe-bin cat --transcribe-arg --dummy 2>&1)"
 require_output_contains "${ARGV_DRY_OUT}" "Command mode: argv" "command argv dry-run"
@@ -1347,6 +1358,9 @@ run_failure_case "missing --ptt-mode value is rejected" 8 \
 
 run_failure_case "missing --mic-name value is rejected" 8 \
   "${VOICE_SCRIPT}" --dry-run --mic-name --provider command --transcribe-cmd cat
+
+run_failure_case "missing --session-key value is rejected" 8 \
+  "${VOICE_SCRIPT}" --dry-run --session-key --provider command --transcribe-cmd cat
 
 run_failure_case "missing --provider value is rejected" 8 \
   "${VOICE_SCRIPT}" --dry-run --provider --transcribe-cmd cat
