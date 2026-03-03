@@ -293,6 +293,7 @@ Speak to goose directly instead of typing your prompts.
         - Add `--hold-strict` to fail fast instead of falling back when hold-key mode is unavailable.
         - When `--duration SEC` is set, fixed-duration capture takes priority and hold-key readiness checks are skipped.
         - Focused-app paste mode (`--insert-mode paste` or auto on macOS) may require Accessibility permissions for `System Events`; dry-run now reports accessibility readiness, and auto mode falls back to transcript-file prefill on paste failure.
+        - Paste failures now emit a machine-parseable reason line (for wrappers/automation), e.g. `GOOSE_VOICE_PASTE_FAILURE_REASON=accessibility_unavailable`.
         - If paste lands in the wrong app/window, set `--paste-app "iTerm2"` (or your terminal app name) to activate the target app before Cmd+V.
 
         Cost/rate-limit posture vs Claude Code voice:

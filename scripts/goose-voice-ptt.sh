@@ -119,6 +119,7 @@ HOLD_PREFLIGHT_DETAIL=""
 EFFECTIVE_PTT_MODE=""
 RECORD_MODE="interactive"
 WORK_DIR=""
+PASTE_FAILURE_REASON=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -371,6 +372,17 @@ tell application "System Events"
   name of first application process whose frontmost is true
 end tell
 APPLESCRIPT
+}
+
+set_paste_failure_reason() {
+  local reason="$1"
+  PASTE_FAILURE_REASON="$reason"
+}
+
+emit_paste_failure_reason() {
+  if [[ -n "$PASTE_FAILURE_REASON" ]]; then
+    echo "GOOSE_VOICE_PASTE_FAILURE_REASON=${PASTE_FAILURE_REASON}" >&2
+  fi
 }
 
 validate_insert_mode() {
@@ -828,9 +840,13 @@ insert_transcript_paste() {
   local frontmost_before=""
   local target_label="focused app"
 
+  PASTE_FAILURE_REASON=""
+
   if [[ -n "$PASTE_APP" ]]; then
     if ! activate_target_app_for_paste "$PASTE_APP"; then
+      set_paste_failure_reason "activate_target_failed"
       echo "Failed to activate paste target app '$PASTE_APP'. Verify app name and that it is installed/running." >&2
+      emit_paste_failure_reason
       return 1
     fi
     target_label="$PASTE_APP"
@@ -849,17 +865,26 @@ tell application "System Events"
 end tell
 APPLESCRIPT
   then
-    if ! system_events_accessible; then
-      echo "Focused-app paste failed: System Events is not accessible. Grant Accessibility/Input Monitoring permissions to your terminal and osascript host." >&2
-    fi
-
     local frontmost_after
     frontmost_after="$(frontmost_app_name || true)"
+
+    if ! system_events_accessible; then
+      set_paste_failure_reason "accessibility_unavailable"
+      echo "Focused-app paste failed: System Events is not accessible. Grant Accessibility/Input Monitoring permissions to your terminal and osascript host." >&2
+    elif [[ -n "$PASTE_APP" && -n "$frontmost_after" && "$frontmost_after" != "$PASTE_APP" ]]; then
+      set_paste_failure_reason "target_not_frontmost"
+      echo "Focused-app paste failed: target app '$PASTE_APP' is not frontmost (frontmost app: ${frontmost_after})." >&2
+    else
+      set_paste_failure_reason "paste_key_event_blocked"
+    fi
+
     if [[ -n "$frontmost_after" ]]; then
       echo "Focused-app paste failed (frontmost app: ${frontmost_after})." >&2
     else
       echo "Focused-app paste failed (could not determine frontmost app)." >&2
     fi
+
+    emit_paste_failure_reason
     return 1
   fi
 
@@ -871,10 +896,13 @@ end tell
 APPLESCRIPT
     then
       if ! system_events_accessible; then
+        set_paste_failure_reason "auto_submit_accessibility_unavailable"
         echo "Paste succeeded but auto-submit ENTER failed: System Events is not accessible. Grant Accessibility/Input Monitoring permissions." >&2
       else
+        set_paste_failure_reason "auto_submit_key_event_blocked"
         echo "Paste succeeded but auto-submit ENTER failed (System Events key event blocked by focused app permissions/state)." >&2
       fi
+      emit_paste_failure_reason
       return 1
     fi
   fi
@@ -972,12 +1000,13 @@ if [[ "$RESOLVED_INSERT_MODE" == "tmux" ]]; then
   fi
 elif [[ "$RESOLVED_INSERT_MODE" == "paste" ]]; then
   if ! insert_transcript_paste "$TRANSCRIPT"; then
+    paste_reason="${PASTE_FAILURE_REASON:-unknown}"
     if [[ "$INSERT_MODE" == "paste" ]]; then
-      echo "Focused-app paste failed; rerun with --insert-mode file or grant Accessibility permissions." >&2
+      echo "Focused-app paste failed (reason: ${paste_reason}); rerun with --insert-mode file or grant Accessibility permissions." >&2
       exit 14
     fi
 
-    echo "⚠️  Focused-app paste failed; falling back to transcript file mode." >&2
+    echo "⚠️  Focused-app paste failed; falling back to transcript file mode. (reason: ${paste_reason})" >&2
     write_transcript_file "$FILE_TRANSCRIPT"
   fi
 else

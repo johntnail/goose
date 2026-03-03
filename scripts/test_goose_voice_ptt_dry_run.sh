@@ -150,6 +150,7 @@ EOF
   fi
 
   require_output_contains "${out}" "Focused-app paste failed; falling back to transcript file mode." "auto-mode paste fallback smoke"
+  require_output_contains "${out}" "GOOSE_VOICE_PASTE_FAILURE_REASON=accessibility_unavailable" "auto-mode paste fallback smoke"
   require_output_contains "${out}" "✅ Transcript saved to: ${transcript_file}" "auto-mode paste fallback smoke"
   require_file_equals "${transcript_file}" "fallback smoke transcript" "auto-mode paste fallback smoke"
 
