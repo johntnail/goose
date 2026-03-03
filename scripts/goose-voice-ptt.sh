@@ -34,6 +34,7 @@ Options:
   --transcribe-cmd CMD    provider=command only; command that outputs transcript to stdout
   --discard               record + transcribe but do not write transcript file
   --print-only            print transcript to stdout (implies --discard)
+  --confirm               ask before writing transcript file (decline => discard)
   -h, --help              show help
 
 Examples:
@@ -45,6 +46,9 @@ Examples:
 
   # Auto-send transcript after insertion
   goose-voice-ptt.sh --auto-submit
+
+  # Ask for confirmation before writing into Goose's transcript bridge file
+  goose-voice-ptt.sh --confirm
 
   # List microphone device indices
   goose-voice-ptt.sh --list-devices
@@ -77,6 +81,7 @@ LANG="${GOOSE_VOICE_LANG:-en}"
 TRANSCRIBE_CMD="${GOOSE_VOICE_TRANSCRIBE_CMD:-}"
 DISCARD=0
 PRINT_ONLY=0
+CONFIRM=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYWATCH_SWIFT="${SCRIPT_DIR}/goose-voice-ptt-keywatch.swift"
 STATUS_LINES=0
@@ -150,6 +155,10 @@ while [[ $# -gt 0 ]]; do
     --print-only)
       PRINT_ONLY=1
       DISCARD=1
+      shift
+      ;;
+    --confirm)
+      CONFIRM=1
       shift
       ;;
     -h|--help)
@@ -476,6 +485,25 @@ if [[ "$DISCARD" -eq 1 ]]; then
   echo "🗑️  Discarded transcript (not written)."
   echo "$TRANSCRIPT"
   exit 0
+fi
+
+if [[ "$CONFIRM" -eq 1 ]]; then
+  if [[ -t 0 ]]; then
+    echo
+    read -r -p "Insert transcript into Goose prompt file? [y/N] " confirm_answer
+    case "${confirm_answer,,}" in
+      y|yes)
+        ;;
+      *)
+        echo "🗑️  Discarded transcript (confirmation declined)."
+        echo "$TRANSCRIPT"
+        exit 0
+        ;;
+    esac
+  else
+    echo "--confirm requires an interactive terminal (stdin is not a TTY)." >&2
+    exit 12
+  fi
 fi
 
 mkdir -p "$(dirname "$TRANSCRIPT_FILE")"

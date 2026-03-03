@@ -276,6 +276,7 @@ Speak to goose directly instead of typing your prompts.
         - `--auto-submit` to send immediately after insertion
         - `--max-duration SEC` for a hard safety cap
         - `--discard` / `--print-only` for safe dry runs
+        - `--confirm` to approve or discard before writing transcript into Goose
         - `--provider local|command` with `--model`, `--lang`, and `--transcribe-cmd`
 
         Cost/rate-limit posture vs Claude Code voice:
