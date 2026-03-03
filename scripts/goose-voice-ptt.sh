@@ -27,6 +27,7 @@ Options:
   --hold-strict           fail instead of falling back when hold-key detection is unavailable
   --transcript-file PATH  transcript output file (default noted above)
   --auto-submit           append " submit" so Goose CLI auto-sends after insert
+  --clear-status          clear transient status lines before showing transcript
   --provider NAME         transcription provider: local|command (default: local)
   --model PATH            local model path (default: ~/.openclaw/models/whisper-cpp/ggml-base.en.bin)
   --lang CODE             local transcription language (default: en)
@@ -69,6 +70,7 @@ PTT_KEY="${GOOSE_VOICE_PTT_KEY:-space}"
 HOLD_STRICT="${GOOSE_VOICE_HOLD_STRICT:-0}"
 TRANSCRIPT_FILE="${GOOSE_CLI_VOICE_TRANSCRIPT_FILE:-/tmp/goose-cli-voice-transcript.txt}"
 AUTO_SUBMIT=0
+CLEAR_STATUS=0
 PROVIDER="${GOOSE_VOICE_PROVIDER:-local}"
 MODEL_PATH="${GOOSE_VOICE_MODEL:-$HOME/.openclaw/models/whisper-cpp/ggml-base.en.bin}"
 LANG="${GOOSE_VOICE_LANG:-en}"
@@ -77,6 +79,7 @@ DISCARD=0
 PRINT_ONLY=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYWATCH_SWIFT="${SCRIPT_DIR}/goose-voice-ptt-keywatch.swift"
+STATUS_LINES=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -118,6 +121,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --auto-submit)
       AUTO_SUBMIT=1
+      shift
+      ;;
+    --clear-status)
+      CLEAR_STATUS=1
       shift
       ;;
     --provider)
@@ -162,6 +169,33 @@ require_cmd() {
     echo "$1 not found in PATH" >&2
     exit 2
   fi
+}
+
+status_line() {
+  echo "$@"
+  STATUS_LINES=$((STATUS_LINES + 1))
+}
+
+status_input_line() {
+  STATUS_LINES=$((STATUS_LINES + 1))
+}
+
+clear_status_lines() {
+  if [[ "$CLEAR_STATUS" -ne 1 ]]; then
+    return
+  fi
+  if [[ ! -t 1 ]]; then
+    return
+  fi
+  if [[ "$STATUS_LINES" -le 0 ]]; then
+    return
+  fi
+
+  local i
+  for ((i = 0; i < STATUS_LINES; i++)); do
+    printf '\033[1A\033[2K'
+  done
+  STATUS_LINES=0
 }
 
 ptt_key_to_code() {
@@ -305,20 +339,22 @@ OUT_PREFIX="$WORK_DIR/transcript"
 FFMPEG_LOG="$WORK_DIR/ffmpeg.log"
 
 record_fixed_duration() {
-  echo "⏺️  Recording ${DURATION}s from mic index ${MIC_INDEX}..."
+  status_line "⏺️  Recording ${DURATION}s from mic index ${MIC_INDEX}..."
   ffmpeg -y -f avfoundation -i ":${MIC_INDEX}" -t "$DURATION" -c:a aac -b:a 96k "$AUDIO_PATH" >"$FFMPEG_LOG" 2>&1
 }
 
 record_interactive_enter() {
-  echo "🎙️  Ready. Press ENTER to start recording (Ctrl+C cancels)."
+  status_line "🎙️  Ready. Press ENTER to start recording (Ctrl+C cancels)."
   read -r
+  status_input_line
 
-  echo "⏺️  Recording... press ENTER to stop (auto-stop at ${MAX_DURATION}s)."
+  status_line "⏺️  Recording... press ENTER to stop (auto-stop at ${MAX_DURATION}s)."
   ffmpeg -y -f avfoundation -i ":${MIC_INDEX}" -t "$MAX_DURATION" -c:a aac -b:a 96k "$AUDIO_PATH" >"$FFMPEG_LOG" 2>&1 &
   local ffmpeg_pid=$!
 
   while kill -0 "$ffmpeg_pid" >/dev/null 2>&1; do
     if IFS= read -r -t 0.2 _; then
+      status_input_line
       kill -INT "$ffmpeg_pid" >/dev/null 2>&1 || true
       break
     fi
@@ -331,7 +367,7 @@ record_interactive_hold() {
   local key_code
   key_code="$(ptt_key_to_code "$PTT_KEY")"
 
-  echo "🎙️  Hold ${PTT_KEY} to record (Ctrl+C cancels; max ${MAX_DURATION}s)."
+  status_line "🎙️  Hold ${PTT_KEY} to record (Ctrl+C cancels; max ${MAX_DURATION}s)."
 
   local down_msg
   if ! down_msg="$(swift "$KEYWATCH_SWIFT" --mode down --key-code "$key_code" 2>&1)"; then
@@ -339,7 +375,7 @@ record_interactive_hold() {
     return
   fi
 
-  echo "⏺️  Recording... release ${PTT_KEY} to stop."
+  status_line "⏺️  Recording... release ${PTT_KEY} to stop."
   ffmpeg -y -f avfoundation -i ":${MIC_INDEX}" -t "$MAX_DURATION" -c:a aac -b:a 96k "$AUDIO_PATH" >"$FFMPEG_LOG" 2>&1 &
   local ffmpeg_pid=$!
 
@@ -411,7 +447,7 @@ if [[ ! -s "$AUDIO_PATH" ]]; then
   exit 6
 fi
 
-echo "🧠 Transcribing (${PROVIDER})..."
+status_line "🧠 Transcribing (${PROVIDER})..."
 if [[ "$PROVIDER" == "local" ]]; then
   TRANSCRIPT="$(transcribe_local)"
 else
@@ -428,6 +464,8 @@ fi
 if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
   TRANSCRIPT="${TRANSCRIPT} submit"
 fi
+
+clear_status_lines
 
 if [[ "$PRINT_ONLY" -eq 1 ]]; then
   echo "$TRANSCRIPT"
