@@ -162,3 +162,15 @@ jobs:
       - name: Run Tests
         run: source ../../bin/activate-hermit && npm run test:run
         working-directory: ui/desktop
+
+  cli-voice-ptt-smoke:
+    name: Goose CLI Voice PTT Dry-Run Smoke
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.docs-only == 'true' || github.event_name != 'pull_request'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6.0.1
+
+      - name: Run Goose CLI voice dry-run harness
+        run: ./scripts/test_goose_voice_ptt_dry_run.sh
