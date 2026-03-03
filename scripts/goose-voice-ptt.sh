@@ -19,6 +19,8 @@ Options:
   --mic-index N           avfoundation audio index (default: 0)
   --duration SEC          fixed record duration in seconds (non-interactive)
   --max-duration SEC      safety cap for interactive record mode (default: 30)
+  --ptt-mode MODE         interactive mode: enter|hold (default: enter)
+  --ptt-key KEY           hold mode key: space|enter|return|left_shift|right_shift or keycode int (default: space)
   --transcript-file PATH  transcript output file (default noted above)
   --auto-submit           append " submit" so Goose CLI auto-sends after insert
   --provider NAME         transcription provider: local|command (default: local)
@@ -32,6 +34,9 @@ Options:
 Examples:
   # Interactive local PTT flow, insert into Goose next prompt
   goose-voice-ptt.sh
+
+  # Hold-to-record (release key to stop)
+  goose-voice-ptt.sh --ptt-mode hold --ptt-key space
 
   # Auto-send transcript after insertion
   goose-voice-ptt.sh --auto-submit
@@ -47,6 +52,8 @@ EOF
 MIC_INDEX="0"
 DURATION=""
 MAX_DURATION="30"
+PTT_MODE="${GOOSE_VOICE_PTT_MODE:-enter}"
+PTT_KEY="${GOOSE_VOICE_PTT_KEY:-space}"
 TRANSCRIPT_FILE="${GOOSE_CLI_VOICE_TRANSCRIPT_FILE:-/tmp/goose-cli-voice-transcript.txt}"
 AUTO_SUBMIT=0
 PROVIDER="${GOOSE_VOICE_PROVIDER:-local}"
@@ -55,6 +62,8 @@ LANG="${GOOSE_VOICE_LANG:-en}"
 TRANSCRIBE_CMD="${GOOSE_VOICE_TRANSCRIBE_CMD:-}"
 DISCARD=0
 PRINT_ONLY=0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KEYWATCH_SWIFT="${SCRIPT_DIR}/goose-voice-ptt-keywatch.swift"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,6 +77,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-duration)
       MAX_DURATION="${2:-}"
+      shift 2
+      ;;
+    --ptt-mode)
+      PTT_MODE="${2:-}"
+      shift 2
+      ;;
+    --ptt-key)
+      PTT_KEY="${2:-}"
       shift 2
       ;;
     --transcript-file)
@@ -122,7 +139,53 @@ require_cmd() {
   fi
 }
 
+ptt_key_to_code() {
+  local key="$1"
+  case "$key" in
+    space)
+      echo "49"
+      ;;
+    enter|return)
+      echo "36"
+      ;;
+    left_shift)
+      echo "56"
+      ;;
+    right_shift)
+      echo "60"
+      ;;
+    [0-9]*)
+      echo "$key"
+      ;;
+    *)
+      echo "Unsupported --ptt-key: $key" >&2
+      echo "Use: space|enter|return|left_shift|right_shift or an integer keycode." >&2
+      exit 8
+      ;;
+  esac
+}
+
+validate_mode() {
+  case "$PTT_MODE" in
+    enter|hold)
+      ;;
+    *)
+      echo "Unsupported --ptt-mode: $PTT_MODE (expected enter|hold)" >&2
+      exit 8
+      ;;
+  esac
+}
+
 require_cmd ffmpeg
+validate_mode
+
+if [[ "$PTT_MODE" == "hold" ]]; then
+  require_cmd swift
+  if [[ ! -f "$KEYWATCH_SWIFT" ]]; then
+    echo "Missing keywatch helper: $KEYWATCH_SWIFT" >&2
+    exit 9
+  fi
+fi
 
 if [[ "$PROVIDER" == "local" ]]; then
   require_cmd whisper-cli
@@ -148,7 +211,7 @@ record_fixed_duration() {
   ffmpeg -y -f avfoundation -i ":${MIC_INDEX}" -t "$DURATION" -c:a aac -b:a 96k "$AUDIO_PATH" >"$FFMPEG_LOG" 2>&1
 }
 
-record_interactive() {
+record_interactive_enter() {
   echo "🎙️  Ready. Press ENTER to start recording (Ctrl+C cancels)."
   read -r
 
@@ -164,6 +227,34 @@ record_interactive() {
   done
 
   wait "$ffmpeg_pid" || true
+}
+
+record_interactive_hold() {
+  local key_code
+  key_code="$(ptt_key_to_code "$PTT_KEY")"
+
+  echo "🎙️  Hold ${PTT_KEY} to record (Ctrl+C cancels; max ${MAX_DURATION}s)."
+  swift "$KEYWATCH_SWIFT" --mode down --key-code "$key_code" >/dev/null
+
+  echo "⏺️  Recording... release ${PTT_KEY} to stop."
+  ffmpeg -y -f avfoundation -i ":${MIC_INDEX}" -t "$MAX_DURATION" -c:a aac -b:a 96k "$AUDIO_PATH" >"$FFMPEG_LOG" 2>&1 &
+  local ffmpeg_pid=$!
+
+  if swift "$KEYWATCH_SWIFT" --mode up --key-code "$key_code" --timeout "$MAX_DURATION" >/dev/null; then
+    kill -INT "$ffmpeg_pid" >/dev/null 2>&1 || true
+  else
+    echo "⏱️  Max duration reached before key release (${MAX_DURATION}s)." >&2
+  fi
+
+  wait "$ffmpeg_pid" || true
+}
+
+record_interactive() {
+  if [[ "$PTT_MODE" == "hold" ]]; then
+    record_interactive_hold
+  else
+    record_interactive_enter
+  fi
 }
 
 transcribe_local() {
