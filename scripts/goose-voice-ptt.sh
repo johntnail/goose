@@ -11,6 +11,7 @@ GOOSE_CLI_VOICE_TRANSCRIPT_FILE semantics.
 
 Defaults:
   - Local transcription via whisper.cpp (`whisper-cli`)
+  - Transcript delivery: file mode (`--insert-mode file`) to Goose transcript bridge
   - Transcript file: $GOOSE_CLI_VOICE_TRANSCRIPT_FILE or /tmp/goose-cli-voice-transcript.txt
   - Interactive record mode: press ENTER to start, ENTER to stop
   - Max duration guard in interactive mode: 30s
@@ -26,7 +27,9 @@ Options:
   --ptt-key KEY           hold mode key: space|enter|return|left_shift|right_shift or keycode int (default: space)
   --hold-strict           fail instead of falling back when hold-key detection is unavailable
   --transcript-file PATH  transcript output file (default noted above)
-  --auto-submit           append " submit" so Goose CLI auto-sends after insert
+  --insert-mode MODE      transcript delivery: file|tmux|auto (default: file)
+  --tmux-target TARGET    tmux pane target for insert-mode tmux/auto
+  --auto-submit           file mode: append " submit"; tmux mode: press ENTER after paste
   --clear-status          clear transient status lines before showing transcript
   --provider NAME         transcription provider: local|command (default: local)
   --model PATH            local model path (default: ~/.openclaw/models/whisper-cpp/ggml-base.en.bin)
@@ -59,6 +62,9 @@ Examples:
   # Use a custom transcript path for an active Goose session
   goose-voice-ptt.sh --transcript-file /tmp/goose-voice.txt
 
+  # Paste directly into the current tmux pane's active Goose prompt
+  goose-voice-ptt.sh --insert-mode tmux
+
   # Custom command provider
   goose-voice-ptt.sh --provider command --transcribe-cmd 'my_transcriber'
 EOF
@@ -73,6 +79,9 @@ PTT_MODE="${GOOSE_VOICE_PTT_MODE:-enter}"
 PTT_KEY="${GOOSE_VOICE_PTT_KEY:-space}"
 HOLD_STRICT="${GOOSE_VOICE_HOLD_STRICT:-0}"
 TRANSCRIPT_FILE="${GOOSE_CLI_VOICE_TRANSCRIPT_FILE:-/tmp/goose-cli-voice-transcript.txt}"
+INSERT_MODE="${GOOSE_VOICE_INSERT_MODE:-file}"
+TMUX_TARGET="${GOOSE_VOICE_TMUX_TARGET:-}"
+RESOLVED_INSERT_MODE="file"
 AUTO_SUBMIT=0
 CLEAR_STATUS=0
 PROVIDER="${GOOSE_VOICE_PROVIDER:-local}"
@@ -122,6 +131,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --transcript-file)
       TRANSCRIPT_FILE="${2:-}"
+      shift 2
+      ;;
+    --insert-mode)
+      INSERT_MODE="${2:-}"
+      shift 2
+      ;;
+    --tmux-target)
+      TMUX_TARGET="${2:-}"
       shift 2
       ;;
     --auto-submit)
@@ -244,6 +261,33 @@ validate_mode() {
   esac
 }
 
+validate_insert_mode() {
+  case "$INSERT_MODE" in
+    file)
+      RESOLVED_INSERT_MODE="file"
+      ;;
+    tmux)
+      require_cmd tmux
+      if [[ -z "${TMUX:-}" && -z "$TMUX_TARGET" ]]; then
+        echo "--insert-mode tmux requires an active tmux session or --tmux-target." >&2
+        exit 13
+      fi
+      RESOLVED_INSERT_MODE="tmux"
+      ;;
+    auto)
+      if command -v tmux >/dev/null 2>&1 && [[ -n "${TMUX:-}" || -n "$TMUX_TARGET" ]]; then
+        RESOLVED_INSERT_MODE="tmux"
+      else
+        RESOLVED_INSERT_MODE="file"
+      fi
+      ;;
+    *)
+      echo "Unsupported --insert-mode: $INSERT_MODE (expected file|tmux|auto)" >&2
+      exit 13
+      ;;
+  esac
+}
+
 fallback_hold_unavailable() {
   local reason="$1"
   reason="${reason//$'\n'/ }"
@@ -319,6 +363,7 @@ if [[ -n "$MIC_NAME" ]]; then
 fi
 
 validate_mode
+validate_insert_mode
 
 if [[ "$PTT_MODE" == "hold" ]]; then
   require_cmd swift
@@ -445,6 +490,38 @@ transcribe_command() {
   bash -lc "$TRANSCRIBE_CMD \"$AUDIO_PATH\""
 }
 
+write_transcript_file() {
+  local text="$1"
+  mkdir -p "$(dirname "$TRANSCRIPT_FILE")"
+  printf "%s" "$text" >"$TRANSCRIPT_FILE"
+
+  echo "✅ Transcript saved to: $TRANSCRIPT_FILE"
+  echo "   Launch/return to Goose CLI and press ENTER to accept or edit the prefill."
+  if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
+    echo "   Auto-submit requested via trailing 'submit'."
+  fi
+}
+
+insert_transcript_tmux() {
+  local text="$1"
+  local -a target_args=()
+
+  if [[ -n "$TMUX_TARGET" ]]; then
+    target_args=(-t "$TMUX_TARGET")
+  fi
+
+  tmux set-buffer -- "$text"
+  tmux paste-buffer -d "${target_args[@]}"
+  if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
+    tmux send-keys "${target_args[@]}" Enter
+  fi
+
+  echo "✅ Transcript pasted into tmux pane${TMUX_TARGET:+ ($TMUX_TARGET)}."
+  if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
+    echo "   Auto-submit requested via ENTER key in tmux."
+  fi
+}
+
 if [[ -n "$DURATION" ]]; then
   record_fixed_duration
 else
@@ -470,11 +547,12 @@ if [[ -z "$TRANSCRIPT" ]]; then
   exit 7
 fi
 
-if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
-  TRANSCRIPT="${TRANSCRIPT} submit"
-fi
-
 clear_status_lines
+
+FILE_TRANSCRIPT="$TRANSCRIPT"
+if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
+  FILE_TRANSCRIPT="${TRANSCRIPT} submit"
+fi
 
 if [[ "$PRINT_ONLY" -eq 1 ]]; then
   echo "$TRANSCRIPT"
@@ -489,8 +567,13 @@ fi
 
 if [[ "$CONFIRM" -eq 1 ]]; then
   if [[ -t 0 ]]; then
+    local_target="Goose prompt file"
+    if [[ "$RESOLVED_INSERT_MODE" == "tmux" ]]; then
+      local_target="active tmux pane"
+    fi
+
     echo
-    read -r -p "Insert transcript into Goose prompt file? [y/N] " confirm_answer
+    read -r -p "Insert transcript into ${local_target}? [y/N] " confirm_answer
     case "${confirm_answer,,}" in
       y|yes)
         ;;
@@ -506,13 +589,18 @@ if [[ "$CONFIRM" -eq 1 ]]; then
   fi
 fi
 
-mkdir -p "$(dirname "$TRANSCRIPT_FILE")"
-printf "%s" "$TRANSCRIPT" >"$TRANSCRIPT_FILE"
+if [[ "$RESOLVED_INSERT_MODE" == "tmux" ]]; then
+  if ! insert_transcript_tmux "$TRANSCRIPT"; then
+    if [[ "$INSERT_MODE" == "tmux" ]]; then
+      echo "tmux insertion failed; rerun with --insert-mode file or fix tmux target/session." >&2
+      exit 14
+    fi
 
-echo "✅ Transcript saved to: $TRANSCRIPT_FILE"
-echo "   Launch/return to Goose CLI and press ENTER to accept or edit the prefill."
-if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
-  echo "   Auto-submit requested via trailing 'submit'."
+    echo "⚠️  tmux insertion failed; falling back to transcript file mode." >&2
+    write_transcript_file "$FILE_TRANSCRIPT"
+  fi
+else
+  write_transcript_file "$FILE_TRANSCRIPT"
 fi
 
 echo
