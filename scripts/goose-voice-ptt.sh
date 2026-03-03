@@ -18,6 +18,7 @@ Defaults:
 
 Options:
   --mic-index N           avfoundation audio index (default: 0)
+  --mic-name TEXT         case-insensitive device name match (overrides --mic-index)
   --list-devices          list avfoundation audio devices and exit
   --duration SEC          fixed record duration in seconds (non-interactive)
   --max-duration SEC      safety cap for interactive record mode (default: 30)
@@ -47,6 +48,9 @@ Examples:
   # List microphone device indices
   goose-voice-ptt.sh --list-devices
 
+  # Select mic by name (case-insensitive substring)
+  goose-voice-ptt.sh --mic-name "MacBook Pro Microphone"
+
   # Use a custom transcript path for an active Goose session
   goose-voice-ptt.sh --transcript-file /tmp/goose-voice.txt
 
@@ -56,6 +60,7 @@ EOF
 }
 
 MIC_INDEX="0"
+MIC_NAME=""
 LIST_DEVICES=0
 DURATION=""
 MAX_DURATION="30"
@@ -77,6 +82,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --mic-index)
       MIC_INDEX="${2:-}"
+      shift 2
+      ;;
+    --mic-name)
+      MIC_NAME="${2:-}"
       shift 2
       ;;
     --list-devices)
@@ -205,19 +214,54 @@ fallback_hold_unavailable() {
   record_interactive_enter
 }
 
+audio_devices_output() {
+  ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 || true
+}
+
 list_audio_devices() {
   local out
-  out="$(ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 || true)"
+  out="$(audio_devices_output)"
 
   echo "🎤 Available avfoundation audio devices:"
   if grep -q "AVFoundation audio devices" <<<"$out"; then
-    awk '/AVFoundation audio devices:/{show=1} show{print}' <<<"$out" | grep "AVFoundation indev" || true
+    awk '/AVFoundation audio devices:/{show=1} /AVFoundation video devices:/{show=0} show{print}' <<<"$out" | grep "AVFoundation indev" || true
   else
     echo "$out"
   fi
 
   echo
-  echo "Use --mic-index N with goose-voice-ptt.sh (where N is the audio device index)."
+  echo "Use --mic-index N or --mic-name TEXT with goose-voice-ptt.sh."
+}
+
+resolve_mic_name() {
+  local query="$1"
+  local out lower_query idx
+
+  lower_query="$(printf "%s" "$query" | tr '[:upper:]' '[:lower:]')"
+  out="$(audio_devices_output)"
+
+  idx="$(awk -v needle="$lower_query" '
+    /AVFoundation audio devices:/ {show=1; next}
+    /AVFoundation video devices:/ {show=0}
+    show && /AVFoundation indev/ {
+      line=tolower($0)
+      if (index(line, needle) > 0) {
+        if (match($0, /\[[0-9]+\]/)) {
+          print substr($0, RSTART + 1, RLENGTH - 2)
+          exit
+        }
+      }
+    }
+  ' <<<"$out")"
+
+  if [[ -z "$idx" ]]; then
+    echo "No audio device matching --mic-name '$query'." >&2
+    echo "Run goose-voice-ptt.sh --list-devices to inspect available indices." >&2
+    exit 11
+  fi
+
+  MIC_INDEX="$idx"
+  echo "🎤 Selected mic index ${MIC_INDEX} from name match: ${query}"
 }
 
 require_cmd ffmpeg
@@ -225,6 +269,10 @@ require_cmd ffmpeg
 if [[ "$LIST_DEVICES" -eq 1 ]]; then
   list_audio_devices
   exit 0
+fi
+
+if [[ -n "$MIC_NAME" ]]; then
+  resolve_mic_name "$MIC_NAME"
 fi
 
 validate_mode

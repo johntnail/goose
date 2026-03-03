@@ -271,7 +271,8 @@ Speak to goose directly instead of typing your prompts.
 
         Helpful options:
         - `--list-devices` to find microphone indices
-        - `--mic-index N` to select a microphone
+        - `--mic-index N` to select a microphone by index
+        - `--mic-name "TEXT"` to select first matching microphone name (case-insensitive)
         - `--auto-submit` to send immediately after insertion
         - `--max-duration SEC` for a hard safety cap
         - `--discard` / `--print-only` for safe dry runs
