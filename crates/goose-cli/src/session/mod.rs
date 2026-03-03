@@ -1,5 +1,6 @@
 mod builder;
 mod completion;
+mod dictation_text;
 mod editor;
 mod elicitation;
 mod export;
