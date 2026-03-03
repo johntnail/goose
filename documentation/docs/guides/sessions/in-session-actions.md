@@ -257,7 +257,41 @@ Speak to goose directly instead of typing your prompts.
 
   </TabItem>
     <TabItem value="cli" label="goose CLI">
-        Voice dictation is not available in the goose CLI. 
+        Voice dictation is available as an experimental script bridge.
+
+        1. Start goose CLI as normal.
+        2. In another terminal, run:
+
+           ```bash
+           scripts/goose-voice-ptt.sh --ptt-mode hold --ptt-key space
+           ```
+
+        3. Hold `Space` to record, release to transcribe, then return to goose.
+        4. goose pre-fills the next prompt from `GOOSE_CLI_VOICE_TRANSCRIPT_FILE`.
+
+        Helpful options:
+        - `--list-devices` to find microphone indices
+        - `--mic-index N` to select a microphone
+        - `--auto-submit` to send immediately after insertion
+        - `--max-duration SEC` for a hard safety cap
+        - `--discard` / `--print-only` for safe dry runs
+        - `--provider local|command` with `--model`, `--lang`, and `--transcribe-cmd`
+
+        Cost/rate-limit posture vs Claude Code voice:
+        - Local mode (`--provider local`) runs on-device with `whisper-cli` (no cloud API cost).
+        - Command mode can use cloud STT; provider billing/rate limits depend on your configured command.
+        - Unlike Claude Code voice rollout claims, Goose CLI does not currently have a built-in "transcription tokens don’t count" policy. Treat cloud transcription as normal billable usage.
+
+        Current gaps vs Claude Code native voice:
+        - No in-line live waveform/timer in terminal input.
+        - Transcript insertion happens at next prompt prefill (not true mid-line cursor injection).
+        - Hold-key mode may require macOS accessibility permissions for key-state detection.
+
+        For script arguments and examples, run:
+
+        ```bash
+        scripts/goose-voice-ptt.sh --help
+        ```
     </TabItem>
 </Tabs>
 
