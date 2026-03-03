@@ -766,19 +766,25 @@ EOF
 
 resolve_mic_name() {
   local query="$1"
-  local out lower_query
+  local out lower_query normalized_query
   local -a exact_match_indices=()
   local -a exact_match_names=()
   local -a partial_match_indices=()
   local -a partial_match_names=()
+  local -a all_device_indices=()
+  local -a all_device_names=()
 
   lower_query="$(printf "%s" "$query" | tr '[:upper:]' '[:lower:]')"
+  normalized_query="$(printf "%s" "$query" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')"
   out="$(audio_devices_output)"
 
   while IFS=$'\t' read -r idx name; do
     if [[ -z "$idx" || -z "$name" ]]; then
       continue
     fi
+
+    all_device_indices+=("$idx")
+    all_device_names+=("$name")
 
     local lower_name
     lower_name="$(printf "%s" "$name" | tr '[:upper:]' '[:lower:]')"
@@ -828,7 +834,27 @@ resolve_mic_name() {
   elif [[ "${#partial_match_indices[@]}" -eq 1 ]]; then
     MIC_INDEX="${partial_match_indices[0]}"
   else
+    local -a suggested_indices=()
+    local -a suggested_names=()
+    local i normalized_name
+
+    if [[ -n "$normalized_query" ]]; then
+      for ((i = 0; i < ${#all_device_indices[@]}; i++)); do
+        normalized_name="$(printf "%s" "${all_device_names[$i]}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')"
+        if [[ -n "$normalized_name" && "$normalized_name" == *"$normalized_query"* ]]; then
+          suggested_indices+=("${all_device_indices[$i]}")
+          suggested_names+=("${all_device_names[$i]}")
+        fi
+      done
+    fi
+
     echo "No audio device matching --mic-name '$query'." >&2
+    if [[ "${#suggested_indices[@]}" -gt 0 ]]; then
+      echo "Did you mean one of these devices?" >&2
+      for ((i = 0; i < ${#suggested_indices[@]}; i++)); do
+        echo "  [${suggested_indices[$i]}] ${suggested_names[$i]}" >&2
+      done
+    fi
     echo "Run goose-voice-ptt.sh --list-devices to inspect available indices." >&2
     exit 11
   fi

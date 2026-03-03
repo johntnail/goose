@@ -366,8 +366,27 @@ EOF
   require_output_contains "${ambiguous_out}" "[2] USB Mic (Aggregate)" "mic-name ambiguous smoke"
   require_output_contains "${ambiguous_out}" "Use --mic-index N or a more specific --mic-name." "mic-name ambiguous smoke"
 
+  set +e
+  local no_match_out
+  no_match_out="$(PATH="${fake_bin}:${PATH}" "${VOICE_SCRIPT}" --dry-run --mic-name builtin --provider command --transcribe-cmd cat 2>&1)"
+  local no_match_rc=$?
+  set -e
+
+  if [[ "${no_match_rc}" -ne 11 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "mic-name no-match smoke: expected rc 11, got ${no_match_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${no_match_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${no_match_out}" "No audio device matching --mic-name 'builtin'." "mic-name no-match smoke"
+  require_output_contains "${no_match_out}" "Did you mean one of these devices?" "mic-name no-match smoke"
+  require_output_contains "${no_match_out}" "[0] Built-in Mic" "mic-name no-match smoke"
+
   rm -rf "${tmp_dir}"
-  pass "mic-name dry-run resolves unique matches and rejects ambiguous matches"
+  pass "mic-name dry-run resolves unique matches, rejects ambiguous matches, and suggests close devices"
 }
 
 run_auto_submit_failure_reason_smoke() {
