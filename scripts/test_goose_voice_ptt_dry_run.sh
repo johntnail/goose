@@ -457,6 +457,64 @@ EOF
   require_output_contains "${launcher_access_out}" "❌ Voice run failed (delivery=paste, reason=auto_submit_accessibility_unavailable)." "launcher auto-submit accessibility smoke"
   require_output_contains "${launcher_access_out}" "Hint: grant Accessibility/Input Monitoring to your terminal and osascript host, then retry." "launcher auto-submit accessibility smoke"
 
+  local status_auto_access_transcript_file="${tmp_dir}/auto-submit-accessibility-fallback-transcript.txt"
+  set +e
+  local status_auto_access_out
+  status_auto_access_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode auto \
+    --auto-submit \
+    --provider command \
+    --transcribe-cmd 'printf "status auto-submit accessibility fallback transcript\\n"' \
+    --transcript-file "${status_auto_access_transcript_file}" \
+    --status-json 2>&1)"
+  local status_auto_access_rc=$?
+  set -e
+
+  if [[ "${status_auto_access_rc}" -ne 0 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "status-json auto-submit accessibility auto-fallback smoke: expected rc 0, got ${status_auto_access_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${status_auto_access_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${status_auto_access_out}" "Focused-app paste failed; falling back to transcript file mode. (reason: auto_submit_accessibility_unavailable)" "status-json auto-submit accessibility auto-fallback smoke"
+  require_output_contains "${status_auto_access_out}" "\"outcome\":\"ok_fallback\"" "status-json auto-submit accessibility auto-fallback smoke"
+  require_output_contains "${status_auto_access_out}" "\"fallback_from\":\"paste\"" "status-json auto-submit accessibility auto-fallback smoke"
+  require_output_contains "${status_auto_access_out}" "\"delivery_mode\":\"file\"" "status-json auto-submit accessibility auto-fallback smoke"
+  require_output_contains "${status_auto_access_out}" "\"reason\":\"auto_submit_accessibility_unavailable\"" "status-json auto-submit accessibility auto-fallback smoke"
+  require_file_equals "${status_auto_access_transcript_file}" "status auto-submit accessibility fallback transcript submit" "status-json auto-submit accessibility auto-fallback smoke"
+
+  local launcher_auto_access_transcript_file="${tmp_dir}/launcher-auto-submit-accessibility-fallback-transcript.txt"
+  set +e
+  local launcher_auto_access_out
+  launcher_auto_access_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode auto \
+    --auto-submit \
+    --provider command \
+    --transcribe-cmd 'printf "launcher auto-submit accessibility fallback transcript\\n"' \
+    --transcript-file "${launcher_auto_access_transcript_file}" 2>&1)"
+  local launcher_auto_access_rc=$?
+  set -e
+
+  if [[ "${launcher_auto_access_rc}" -ne 0 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "launcher auto-submit accessibility auto-fallback smoke: expected rc 0, got ${launcher_auto_access_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${launcher_auto_access_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${launcher_auto_access_out}" "⚠️  Voice fast path (paste) failed; fell back to file bridge." "launcher auto-submit accessibility auto-fallback smoke"
+  require_output_contains "${launcher_auto_access_out}" "Hint: grant Accessibility/Input Monitoring to your terminal and osascript host, then retry." "launcher auto-submit accessibility auto-fallback smoke"
+  require_file_equals "${launcher_auto_access_transcript_file}" "launcher auto-submit accessibility fallback transcript submit" "launcher auto-submit accessibility auto-fallback smoke"
+
   rm -rf "${tmp_dir}"
   pass "status-json and launcher expose auto-submit failure reasons (key-event + accessibility)"
 }
