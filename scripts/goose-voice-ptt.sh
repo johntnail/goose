@@ -21,7 +21,7 @@ Options:
   --mic-index N           avfoundation audio index (default: 0)
   --mic-name TEXT         case-insensitive device name match (overrides --mic-index)
   --list-devices          list avfoundation audio devices and exit
-  --duration SEC          fixed record duration in seconds (non-interactive)
+  --duration SEC          fixed record duration in seconds (non-interactive; overrides --ptt-mode/--ptt-key)
   --max-duration SEC      safety cap for interactive record mode (default: 30)
   --ptt-mode MODE         interactive mode: enter|hold (default: enter)
   --ptt-key KEY           hold mode key: space|enter|return|left_shift|right_shift or keycode int (default: space)
@@ -103,6 +103,7 @@ HOLD_KEY_CODE=""
 HOLD_PREFLIGHT_STATUS="n/a"
 HOLD_PREFLIGHT_DETAIL=""
 EFFECTIVE_PTT_MODE=""
+RECORD_MODE="interactive"
 WORK_DIR=""
 
 while [[ $# -gt 0 ]]; do
@@ -460,7 +461,12 @@ validate_mode
 validate_insert_mode
 
 EFFECTIVE_PTT_MODE="$PTT_MODE"
-if [[ "$PTT_MODE" == "hold" ]]; then
+if [[ -n "$DURATION" ]]; then
+  RECORD_MODE="fixed"
+  EFFECTIVE_PTT_MODE="fixed"
+fi
+
+if [[ "$EFFECTIVE_PTT_MODE" == "hold" ]]; then
   require_cmd swift
   if [[ ! -f "$KEYWATCH_SWIFT" ]]; then
     echo "Missing keywatch helper: $KEYWATCH_SWIFT" >&2
@@ -486,14 +492,24 @@ fi
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "✅ goose-voice-ptt dry run: configuration looks valid"
   echo "   Mic index: ${MIC_INDEX}"
-  echo "   PTT mode: ${PTT_MODE} (key: ${PTT_KEY})"
+  if [[ "$RECORD_MODE" == "fixed" ]]; then
+    echo "   Record mode: fixed (duration: ${DURATION}s)"
+    echo "   PTT mode: ${PTT_MODE} (ignored in fixed-duration mode)"
+  else
+    echo "   Record mode: interactive"
+    echo "   PTT mode: ${PTT_MODE} (key: ${PTT_KEY})"
+  fi
   if [[ "$PTT_MODE" == "hold" ]]; then
-    echo "   Hold preflight: ${HOLD_PREFLIGHT_STATUS}"
-    if [[ -n "$HOLD_PREFLIGHT_DETAIL" ]]; then
-      echo "   Hold detail: ${HOLD_PREFLIGHT_DETAIL}"
-    fi
-    if [[ "$EFFECTIVE_PTT_MODE" != "$PTT_MODE" ]]; then
-      echo "   Effective PTT mode on real run: ${EFFECTIVE_PTT_MODE} (fallback)"
+    if [[ "$RECORD_MODE" == "fixed" ]]; then
+      echo "   Hold preflight: skipped (fixed-duration mode)"
+    else
+      echo "   Hold preflight: ${HOLD_PREFLIGHT_STATUS}"
+      if [[ -n "$HOLD_PREFLIGHT_DETAIL" ]]; then
+        echo "   Hold detail: ${HOLD_PREFLIGHT_DETAIL}"
+      fi
+      if [[ "$EFFECTIVE_PTT_MODE" != "$PTT_MODE" ]]; then
+        echo "   Effective PTT mode on real run: ${EFFECTIVE_PTT_MODE} (fallback)"
+      fi
     fi
   fi
   echo "   Insert mode: ${INSERT_MODE} -> ${RESOLVED_INSERT_MODE}"

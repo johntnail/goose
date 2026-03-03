@@ -93,6 +93,12 @@ else
     "${VOICE_SCRIPT}" --dry-run --ptt-mode hold --hold-strict --provider command --transcribe-cmd cat
 fi
 
+# Fixed-duration mode should bypass hold preflight even if --ptt-mode hold was provided.
+FIXED_HOLD_OUT="$(${VOICE_SCRIPT} --dry-run --duration 2 --ptt-mode hold --provider command --transcribe-cmd cat 2>&1)"
+require_output_contains "${FIXED_HOLD_OUT}" "Record mode: fixed (duration: 2s)" "fixed-duration dry-run"
+require_output_contains "${FIXED_HOLD_OUT}" "Hold preflight: skipped (fixed-duration mode)" "fixed-duration dry-run"
+pass "fixed-duration mode bypasses hold preflight checks"
+
 # Invalid mode should fail fast with argument validation.
 run_failure_case "invalid --ptt-mode is rejected" 8 \
   "${VOICE_SCRIPT}" --dry-run --ptt-mode nope --provider command --transcribe-cmd cat
