@@ -719,8 +719,59 @@ EOF
   require_output_contains "${launcher_out}" "Hint: bring the target terminal to front or set --paste-app \"YourTerminalApp\"." "target-not-frontmost launcher smoke"
   require_file_equals "${launcher_transcript_file}" "target not frontmost launcher transcript" "target-not-frontmost launcher smoke"
 
+  set +e
+  local explicit_status_out
+  explicit_status_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --paste-app iTerm2 \
+    --provider command \
+    --transcribe-cmd 'printf "target not frontmost explicit status transcript\\n"' \
+    --status-json 2>&1)"
+  local explicit_status_rc=$?
+  set -e
+
+  if [[ "${explicit_status_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "target-not-frontmost explicit status smoke: expected rc 14, got ${explicit_status_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${explicit_status_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${explicit_status_out}" "GOOSE_VOICE_PASTE_FAILURE_REASON=target_not_frontmost" "target-not-frontmost explicit status smoke"
+  require_output_contains "${explicit_status_out}" "\"outcome\":\"error\"" "target-not-frontmost explicit status smoke"
+  require_output_contains "${explicit_status_out}" "\"delivery_mode\":\"paste\"" "target-not-frontmost explicit status smoke"
+  require_output_contains "${explicit_status_out}" "\"reason\":\"target_not_frontmost\"" "target-not-frontmost explicit status smoke"
+
+  set +e
+  local explicit_launcher_out
+  explicit_launcher_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --paste-app iTerm2 \
+    --provider command \
+    --transcribe-cmd 'printf "target not frontmost explicit launcher transcript\\n"' 2>&1)"
+  local explicit_launcher_rc=$?
+  set -e
+
+  if [[ "${explicit_launcher_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "target-not-frontmost explicit launcher smoke: expected rc 14, got ${explicit_launcher_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${explicit_launcher_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${explicit_launcher_out}" "❌ Voice run failed (delivery=paste, reason=target_not_frontmost)." "target-not-frontmost explicit launcher smoke"
+  require_output_contains "${explicit_launcher_out}" "Hint: bring the target terminal to front or set --paste-app \"YourTerminalApp\"." "target-not-frontmost explicit launcher smoke"
+
   rm -rf "${tmp_dir}"
-  pass "status-json and launcher expose target_not_frontmost fallback reason"
+  pass "status-json and launcher expose target_not_frontmost fallback + explicit-paste error reasons"
 }
 
 run_launcher_tmux_fallback_summary_smoke() {
