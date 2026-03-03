@@ -264,6 +264,9 @@ Speak to goose directly instead of typing your prompts.
 
            ```bash
            scripts/goose-voice-ptt.sh --ptt-mode hold --ptt-key space --insert-mode auto
+
+           # Optional launcher wrapper: runs with --status-json and prints a concise outcome summary
+           scripts/goose-voice-ptt-launch.sh --ptt-mode hold --ptt-key space --insert-mode auto
            ```
 
         3. Hold `Space` to record, release to transcribe.
@@ -295,6 +298,7 @@ Speak to goose directly instead of typing your prompts.
         - Focused-app paste mode (`--insert-mode paste` or auto on macOS) may require Accessibility permissions for `System Events`; dry-run now reports accessibility readiness, and auto mode falls back to transcript-file prefill on paste failure.
         - Paste failures now emit a machine-parseable reason line (for wrappers/automation), e.g. `GOOSE_VOICE_PASTE_FAILURE_REASON=accessibility_unavailable`.
         - Add `--status-json` to emit a single machine-parseable summary line on exit (includes insertion mode, fallback source, reason, and exit code) as `GOOSE_VOICE_STATUS_JSON={...}`.
+        - Use `scripts/goose-voice-ptt-launch.sh ...` for a wrapper that consumes `--status-json` and prints a concise human-readable outcome (fast-path success vs fallback with guidance).
         - If paste lands in the wrong app/window, set `--paste-app "iTerm2"` (or your terminal app name) to activate the target app before Cmd+V.
 
         Cost/rate-limit posture vs Claude Code voice:
