@@ -303,6 +303,13 @@ Speak to goose directly instead of typing your prompts.
         - Use `scripts/goose-voice-ptt-launch.sh ...` for a wrapper that consumes `--status-json` and prints a concise human-readable outcome (including tmux-target guidance for `tmux_insert_failed`).
         - If paste lands in the wrong app/window, set `--paste-app "iTerm2"` (or your terminal app name) to activate the target app before Cmd+V.
 
+        Practical non-tmux reliability tips:
+        - Run `scripts/goose-voice-ptt.sh --dry-run --insert-mode auto --paste-app "YourTerminal"` once before sessions to confirm accessibility + focus targeting.
+        - Keep your Goose terminal window frontmost when releasing push-to-talk; if another app steals focus, auto mode intentionally falls back to transcript-file delivery.
+        - Use `scripts/goose-voice-ptt-launch.sh ...` during daily use so fallback reasons stay human-readable instead of requiring JSON parsing.
+        - If you want deterministic behavior over speed, use `--insert-mode file` (always writes transcript file for next-prompt prefill).
+        - For the closest Claude-Code-like active-line insertion reliability, run Goose inside tmux and use `--insert-mode auto` (or `--insert-mode tmux`).
+
         Cost/rate-limit posture vs Claude Code voice:
         - Local mode (`--provider local`) runs on-device with `whisper-cli` (no cloud API cost).
         - Command mode can use cloud STT; provider billing/rate limits depend on your configured command.
