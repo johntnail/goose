@@ -27,9 +27,9 @@ Options:
   --ptt-key KEY           hold mode key: space|enter|return|left_shift|right_shift or keycode int (default: space)
   --hold-strict           fail instead of falling back when hold-key detection is unavailable
   --transcript-file PATH  transcript output file (default noted above)
-  --insert-mode MODE      transcript delivery: file|tmux|auto (default: file)
+  --insert-mode MODE      transcript delivery: file|tmux|paste|auto (default: file)
   --tmux-target TARGET    tmux pane target for insert-mode tmux/auto
-  --auto-submit           file mode: append " submit"; tmux mode: press ENTER after paste
+  --auto-submit           file mode: append " submit"; tmux/paste mode: press ENTER after paste
   --clear-status          clear transient status lines before showing transcript
   --provider NAME         transcription provider: local|command (default: local)
   --model PATH            local model path (default: ~/.openclaw/models/whisper-cpp/ggml-base.en.bin)
@@ -65,6 +65,9 @@ Examples:
 
   # Paste directly into the current tmux pane's active Goose prompt
   goose-voice-ptt.sh --insert-mode tmux
+
+  # Paste into the currently focused macOS app (Terminal/iTerm/etc.)
+  goose-voice-ptt.sh --insert-mode paste
 
   # Custom command provider
   goose-voice-ptt.sh --provider command --transcribe-cmd 'my_transcriber'
@@ -301,6 +304,10 @@ validate_mode() {
   esac
 }
 
+can_use_macos_paste() {
+  [[ "$(uname -s)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1 && command -v osascript >/dev/null 2>&1
+}
+
 validate_insert_mode() {
   case "$INSERT_MODE" in
     file)
@@ -314,15 +321,24 @@ validate_insert_mode() {
       fi
       RESOLVED_INSERT_MODE="tmux"
       ;;
+    paste)
+      if ! can_use_macos_paste; then
+        echo "--insert-mode paste requires macOS with pbcopy and osascript available." >&2
+        exit 13
+      fi
+      RESOLVED_INSERT_MODE="paste"
+      ;;
     auto)
       if command -v tmux >/dev/null 2>&1 && [[ -n "${TMUX:-}" || -n "$TMUX_TARGET" ]]; then
         RESOLVED_INSERT_MODE="tmux"
+      elif can_use_macos_paste; then
+        RESOLVED_INSERT_MODE="paste"
       else
         RESOLVED_INSERT_MODE="file"
       fi
       ;;
     *)
-      echo "Unsupported --insert-mode: $INSERT_MODE (expected file|tmux|auto)" >&2
+      echo "Unsupported --insert-mode: $INSERT_MODE (expected file|tmux|paste|auto)" >&2
       exit 13
       ;;
   esac
@@ -519,6 +535,8 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     else
       echo "   tmux target: current pane"
     fi
+  elif [[ "$RESOLVED_INSERT_MODE" == "paste" ]]; then
+    echo "   Paste target: currently focused macOS app"
   else
     echo "   Transcript file: ${TRANSCRIPT_FILE}"
   fi
@@ -669,6 +687,39 @@ insert_transcript_tmux() {
   fi
 }
 
+insert_transcript_paste() {
+  local text="$1"
+
+  printf "%s" "$text" | pbcopy
+
+  if ! osascript >/dev/null 2>&1 <<'APPLESCRIPT'
+tell application "System Events"
+  keystroke "v" using command down
+end tell
+APPLESCRIPT
+  then
+    echo "Focused-app paste failed (System Events permission or frontmost app issue)." >&2
+    return 1
+  fi
+
+  if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
+    if ! osascript >/dev/null 2>&1 <<'APPLESCRIPT'
+tell application "System Events"
+  key code 36
+end tell
+APPLESCRIPT
+    then
+      echo "Paste succeeded but auto-submit ENTER failed (System Events permission issue)." >&2
+      return 1
+    fi
+  fi
+
+  echo "✅ Transcript pasted into focused app via clipboard."
+  if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
+    echo "   Auto-submit requested via ENTER key."
+  fi
+}
+
 if [[ -n "$DURATION" ]]; then
   record_fixed_duration
 else
@@ -717,6 +768,8 @@ if [[ "$CONFIRM" -eq 1 ]]; then
     local_target="Goose prompt file"
     if [[ "$RESOLVED_INSERT_MODE" == "tmux" ]]; then
       local_target="active tmux pane"
+    elif [[ "$RESOLVED_INSERT_MODE" == "paste" ]]; then
+      local_target="focused macOS app"
     fi
 
     echo
@@ -744,6 +797,16 @@ if [[ "$RESOLVED_INSERT_MODE" == "tmux" ]]; then
     fi
 
     echo "⚠️  tmux insertion failed; falling back to transcript file mode." >&2
+    write_transcript_file "$FILE_TRANSCRIPT"
+  fi
+elif [[ "$RESOLVED_INSERT_MODE" == "paste" ]]; then
+  if ! insert_transcript_paste "$TRANSCRIPT"; then
+    if [[ "$INSERT_MODE" == "paste" ]]; then
+      echo "Focused-app paste failed; rerun with --insert-mode file or grant Accessibility permissions." >&2
+      exit 14
+    fi
+
+    echo "⚠️  Focused-app paste failed; falling back to transcript file mode." >&2
     write_transcript_file "$FILE_TRANSCRIPT"
   fi
 else

@@ -269,13 +269,14 @@ Speak to goose directly instead of typing your prompts.
         3. Hold `Space` to record, release to transcribe.
         4. Insertion behavior:
            - In tmux (`--insert-mode auto`): transcript is pasted directly into the active pane input (fast path).
-           - Outside tmux: transcript is written to `GOOSE_CLI_VOICE_TRANSCRIPT_FILE` for next-prompt prefill.
+           - On macOS outside tmux: `--insert-mode auto` uses focused-app paste (`Cmd+V`) via clipboard automation.
+           - Fallback: transcript is written to `GOOSE_CLI_VOICE_TRANSCRIPT_FILE` for next-prompt prefill.
 
         Helpful options:
         - `--list-devices` to find microphone indices
         - `--mic-index N` to select a microphone by index
         - `--mic-name "TEXT"` to select first matching microphone name (case-insensitive)
-        - `--insert-mode file|tmux|auto` to force/choose transcript delivery mode
+        - `--insert-mode file|tmux|paste|auto` to force/choose transcript delivery mode
         - `--tmux-target pane` to paste into a specific tmux pane/window
         - `--auto-submit` to send immediately after insertion
         - `--max-duration SEC` for a hard safety cap
@@ -288,6 +289,7 @@ Speak to goose directly instead of typing your prompts.
         - If hold-key permissions are unavailable, Goose prints a warning and falls back to ENTER mode by default.
         - Add `--hold-strict` to fail fast instead of falling back when hold-key mode is unavailable.
         - When `--duration SEC` is set, fixed-duration capture takes priority and hold-key readiness checks are skipped.
+        - Focused-app paste mode (`--insert-mode paste` or auto on macOS) may require Accessibility permissions for `System Events`; on failure, auto mode falls back to transcript-file prefill.
 
         Cost/rate-limit posture vs Claude Code voice:
         - Local mode (`--provider local`) runs on-device with `whisper-cli` (no cloud API cost).
@@ -296,7 +298,7 @@ Speak to goose directly instead of typing your prompts.
 
         Current gaps vs Claude Code native voice:
         - No in-line live waveform/timer in terminal input.
-        - Mid-line cursor-equivalent insertion is tmux-only today; outside tmux, Goose falls back to next-prompt prefill via transcript file.
+        - Mid-line cursor-equivalent insertion is most reliable in tmux; outside tmux it depends on macOS focused-app paste permissions, otherwise Goose falls back to next-prompt prefill via transcript file.
         - Hold-key mode may require macOS accessibility permissions for key-state detection.
 
         For script arguments and examples, run:

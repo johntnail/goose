@@ -22,6 +22,10 @@ skip() {
   echo "⏭️  $1"
 }
 
+can_use_macos_paste() {
+  [[ "$(uname -s)" == "Darwin" ]] && command -v pbcopy >/dev/null 2>&1 && command -v osascript >/dev/null 2>&1
+}
+
 require_output_contains() {
   local haystack="$1"
   local needle="$2"
@@ -75,10 +79,23 @@ DEFAULT_OUT="$("${BASE_CMD[@]}" 2>&1)"
 require_output_contains "${DEFAULT_OUT}" "Insert mode: file -> file" "default dry-run"
 pass "default dry-run (file mode)"
 
-# Auto mode without tmux context should resolve to file.
+# Auto mode without tmux context should resolve to paste on supported macOS hosts, else file.
 AUTO_OUT="$(${VOICE_SCRIPT} --dry-run --insert-mode auto --provider command --transcribe-cmd cat 2>&1)"
-require_output_contains "${AUTO_OUT}" "Insert mode: auto -> file" "auto dry-run"
-pass "auto insert-mode resolves to file when no tmux context"
+if can_use_macos_paste; then
+  require_output_contains "${AUTO_OUT}" "Insert mode: auto -> paste" "auto dry-run"
+  pass "auto insert-mode resolves to paste when macOS focused-app paste is available"
+
+  PASTE_OUT="$(${VOICE_SCRIPT} --dry-run --insert-mode paste --provider command --transcribe-cmd cat 2>&1)"
+  require_output_contains "${PASTE_OUT}" "Insert mode: paste -> paste" "paste dry-run"
+  require_output_contains "${PASTE_OUT}" "Paste target: currently focused macOS app" "paste dry-run"
+  pass "explicit paste mode dry-run succeeds on supported macOS hosts"
+else
+  require_output_contains "${AUTO_OUT}" "Insert mode: auto -> file" "auto dry-run"
+  pass "auto insert-mode resolves to file when no tmux/paste fast path is available"
+
+  run_failure_case "explicit paste mode rejects unsupported hosts" 13 \
+    "${VOICE_SCRIPT}" --dry-run --insert-mode paste --provider command --transcribe-cmd cat
+fi
 
 # Hold mode dry-run should surface preflight readiness details.
 HOLD_OUT="$(${VOICE_SCRIPT} --dry-run --ptt-mode hold --provider command --transcribe-cmd cat 2>&1)"
