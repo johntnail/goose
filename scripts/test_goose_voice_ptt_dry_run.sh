@@ -387,8 +387,78 @@ EOF
   require_output_contains "${launcher_err_out}" "❌ Voice run failed (delivery=paste, reason=auto_submit_key_event_blocked)." "launcher auto-submit error smoke"
   require_output_contains "${launcher_err_out}" "Hint: focused app blocked synthetic key events; retry with --insert-mode file or adjust permissions/state." "launcher auto-submit error smoke"
 
+  cat >"${fake_bin}/osascript" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+script="$(cat)"
+
+if [[ "${script}" == *"keystroke \"v\" using command down"* ]]; then
+  exit 0
+fi
+
+if [[ "${script}" == *"key code 36"* ]]; then
+  exit 1
+fi
+
+if [[ "${script}" == *"count every process"* ]]; then
+  exit 1
+fi
+
+exit 0
+EOF
+  chmod +x "${fake_bin}/osascript"
+
+  set +e
+  local status_access_out
+  status_access_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --auto-submit \
+    --provider command \
+    --transcribe-cmd 'printf "status auto-submit accessibility transcript\\n"' \
+    --status-json 2>&1)"
+  local status_access_rc=$?
+  set -e
+
+  if [[ "${status_access_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "status-json auto-submit accessibility smoke: expected rc 14, got ${status_access_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${status_access_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${status_access_out}" "GOOSE_VOICE_PASTE_FAILURE_REASON=auto_submit_accessibility_unavailable" "status-json auto-submit accessibility smoke"
+  require_output_contains "${status_access_out}" "\"reason\":\"auto_submit_accessibility_unavailable\"" "status-json auto-submit accessibility smoke"
+
+  set +e
+  local launcher_access_out
+  launcher_access_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --auto-submit \
+    --provider command \
+    --transcribe-cmd 'printf "launcher auto-submit accessibility transcript\\n"' 2>&1)"
+  local launcher_access_rc=$?
+  set -e
+
+  if [[ "${launcher_access_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "launcher auto-submit accessibility smoke: expected rc 14, got ${launcher_access_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${launcher_access_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${launcher_access_out}" "❌ Voice run failed (delivery=paste, reason=auto_submit_accessibility_unavailable)." "launcher auto-submit accessibility smoke"
+  require_output_contains "${launcher_access_out}" "Hint: grant Accessibility/Input Monitoring to your terminal and osascript host, then retry." "launcher auto-submit accessibility smoke"
+
   rm -rf "${tmp_dir}"
-  pass "status-json and launcher expose auto-submit key-event failure reasons"
+  pass "status-json and launcher expose auto-submit failure reasons (key-event + accessibility)"
 }
 
 run_launcher_tmux_fallback_summary_smoke() {
