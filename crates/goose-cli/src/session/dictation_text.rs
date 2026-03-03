@@ -73,8 +73,10 @@ fn submit_suffix_re() -> &'static Regex {
 fn discard_only_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?i)^(?:cancel|discard|never\s+mind)[.,!?;'\"\s]*$")
-            .expect("valid discard regex")
+        Regex::new(
+            r"(?i)^(?:cancel(?:\s+that)?|discard(?:\s+that)?|never\s*mind(?:\s+that)?|scratch\s+that)[.,!?;'\"\s]*$",
+        )
+        .expect("valid discard regex")
     })
 }
 
@@ -138,7 +140,11 @@ mod tests {
     #[test]
     fn standalone_cancel_is_ignored() {
         assert!(apply_dictation_transcript("draft", "cancel!!!").is_none());
+        assert!(apply_dictation_transcript("draft", "cancel that").is_none());
+        assert!(apply_dictation_transcript("draft", "discard that.").is_none());
         assert!(apply_dictation_transcript("draft", "never mind").is_none());
+        assert!(apply_dictation_transcript("draft", "nevermind that").is_none());
+        assert!(apply_dictation_transcript("draft", "scratch that").is_none());
     }
 
     #[test]
@@ -149,6 +155,15 @@ mod tests {
             out,
             DictationInsertion {
                 merged_text: "cancel the old plan and write a new one".to_string(),
+                auto_submit: false
+            }
+        );
+
+        let out = apply_dictation_transcript("", "scratch that old section, keep the rest").unwrap();
+        assert_eq!(
+            out,
+            DictationInsertion {
+                merged_text: "scratch that old section, keep the rest".to_string(),
                 auto_submit: false
             }
         );
