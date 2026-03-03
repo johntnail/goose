@@ -573,6 +573,123 @@ EOF
   pass "status-json and launcher expose auto-submit failure reasons (key-event + accessibility)"
 }
 
+run_target_not_frontmost_reason_smoke() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    skip "target-not-frontmost reason smoke requires macOS"
+    return
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${@: -1}"
+mkdir -p "$(dirname "${out}")"
+printf "fake-audio" >"${out}"
+EOF
+  chmod +x "${fake_bin}/ffmpeg"
+
+  cat >"${fake_bin}/pbcopy" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+EOF
+  chmod +x "${fake_bin}/pbcopy"
+
+  cat >"${fake_bin}/osascript" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+script="$(cat)"
+
+# activate_target_app_for_paste passes target app as argv[1]
+if [[ "$#" -gt 0 ]]; then
+  exit 0
+fi
+
+if [[ "${script}" == *"name of first application process whose frontmost is true"* ]]; then
+  echo "Terminal"
+  exit 0
+fi
+
+if [[ "${script}" == *"keystroke \"v\" using command down"* ]]; then
+  exit 1
+fi
+
+if [[ "${script}" == *"count every process"* ]]; then
+  exit 0
+fi
+
+exit 0
+EOF
+  chmod +x "${fake_bin}/osascript"
+
+  local status_transcript_file="${tmp_dir}/target-not-frontmost-status-transcript.txt"
+
+  set +e
+  local status_out
+  status_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode auto \
+    --paste-app iTerm2 \
+    --provider command \
+    --transcribe-cmd 'printf "target not frontmost status transcript\\n"' \
+    --transcript-file "${status_transcript_file}" \
+    --status-json 2>&1)"
+  local status_rc=$?
+  set -e
+
+  if [[ "${status_rc}" -ne 0 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "target-not-frontmost status smoke: expected rc 0, got ${status_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${status_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${status_out}" "GOOSE_VOICE_PASTE_FAILURE_REASON=target_not_frontmost" "target-not-frontmost status smoke"
+  require_output_contains "${status_out}" "Focused-app paste failed: target app 'iTerm2' is not frontmost (frontmost app: Terminal)." "target-not-frontmost status smoke"
+  require_output_contains "${status_out}" "Focused-app paste failed; falling back to transcript file mode. (reason: target_not_frontmost)" "target-not-frontmost status smoke"
+  require_output_contains "${status_out}" "\"outcome\":\"ok_fallback\"" "target-not-frontmost status smoke"
+  require_output_contains "${status_out}" "\"reason\":\"target_not_frontmost\"" "target-not-frontmost status smoke"
+  require_file_equals "${status_transcript_file}" "target not frontmost status transcript" "target-not-frontmost status smoke"
+
+  local launcher_transcript_file="${tmp_dir}/target-not-frontmost-launcher-transcript.txt"
+
+  set +e
+  local launcher_out
+  launcher_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode auto \
+    --paste-app iTerm2 \
+    --provider command \
+    --transcribe-cmd 'printf "target not frontmost launcher transcript\\n"' \
+    --transcript-file "${launcher_transcript_file}" 2>&1)"
+  local launcher_rc=$?
+  set -e
+
+  if [[ "${launcher_rc}" -ne 0 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "target-not-frontmost launcher smoke: expected rc 0, got ${launcher_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${launcher_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${launcher_out}" "⚠️  Voice fast path (paste) failed; fell back to file bridge." "target-not-frontmost launcher smoke"
+  require_output_contains "${launcher_out}" "Hint: bring the target terminal to front or set --paste-app \"YourTerminalApp\"." "target-not-frontmost launcher smoke"
+  require_file_equals "${launcher_transcript_file}" "target not frontmost launcher transcript" "target-not-frontmost launcher smoke"
+
+  rm -rf "${tmp_dir}"
+  pass "status-json and launcher expose target_not_frontmost fallback reason"
+}
+
 run_launcher_tmux_fallback_summary_smoke() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
@@ -744,6 +861,7 @@ run_auto_mode_paste_fallback_smoke
 run_launcher_status_summary_smoke
 run_mic_name_resolution_smoke
 run_auto_submit_failure_reason_smoke
+run_target_not_frontmost_reason_smoke
 run_launcher_tmux_fallback_summary_smoke
 run_launcher_tmux_error_summary_smoke
 
