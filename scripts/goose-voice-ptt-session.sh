@@ -40,7 +40,10 @@ Examples:
   # Override transcript/provider settings for this launch
   scripts/goose-voice-ptt-session.sh --session-key demo --provider local --lang en
 
-  # Start goose session with explicit goose args
+  # Start goose session with common session flags (no `--` required)
+  scripts/goose-voice-ptt-session.sh -n voice-demo
+
+  # Start goose session with explicit goose args/subcommands
   scripts/goose-voice-ptt-session.sh -- session -n voice-demo
 
   # Dry-run to inspect env + launch command
@@ -125,6 +128,10 @@ done
 
 if [[ ${#GOOSE_ARGS[@]} -eq 0 ]]; then
   GOOSE_ARGS=(session)
+elif [[ "${GOOSE_ARGS[0]}" == -* ]]; then
+  # Convenience: treat bare goose-session flags (e.g. -n demo) as `goose session ...`
+  # so callers do not need `-- session ...` for common session naming/tuning args.
+  GOOSE_ARGS=(session "${GOOSE_ARGS[@]}")
 fi
 
 PRINT_ENV_CMD=("${VOICE_SCRIPT}" --print-session-env)

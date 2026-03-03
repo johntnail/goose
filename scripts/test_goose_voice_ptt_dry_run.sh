@@ -1296,6 +1296,11 @@ require_output_contains "${SESSION_LAUNCH_DRY_OUT}" "export GOOSE_VOICE_LANG=" "
 require_output_contains "${SESSION_LAUNCH_DRY_OUT}" "Would run: goose session" "session launcher dry-run"
 pass "session launcher dry-run emits voice exports and default goose command"
 
+SESSION_LAUNCH_FLAG_ONLY_DRY_OUT="$(${SESSION_LAUNCH_SCRIPT} --session-key voice-demo --dry-run -n voice-demo 2>&1)"
+require_output_contains "${SESSION_LAUNCH_FLAG_ONLY_DRY_OUT}" "export GOOSE_VOICE_SESSION_KEY=\"voice-demo\"" "session launcher flag-only dry-run"
+require_output_contains "${SESSION_LAUNCH_FLAG_ONLY_DRY_OUT}" "Would run: goose session -n voice-demo" "session launcher flag-only dry-run"
+pass "session launcher auto-prefixes session when only session flags are passed"
+
 SESSION_LAUNCH_KEY_DRY_OUT="$(${SESSION_LAUNCH_SCRIPT} --session-key voice-demo --dry-run -- session -n voice-demo 2>&1)"
 require_output_contains "${SESSION_LAUNCH_KEY_DRY_OUT}" "export GOOSE_VOICE_SESSION_KEY=\"voice-demo\"" "session launcher session-key dry-run"
 require_output_contains "${SESSION_LAUNCH_KEY_DRY_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=\"/tmp/goose-cli-voice-transcript-voice-demo.txt\"" "session launcher session-key dry-run"
