@@ -37,7 +37,10 @@ Options:
   --provider NAME         transcription provider: local|command (default: local)
   --model PATH            local model path (default: ~/.openclaw/models/whisper-cpp/ggml-base.en.bin)
   --lang CODE             local transcription language (default: en)
-  --transcribe-cmd CMD    provider=command only; command that outputs transcript to stdout
+  --transcribe-cmd CMD    provider=command only; shell command string (legacy mode; receives audio path as final arg)
+  --transcribe-bin BIN    provider=command only; executable path for safer argv mode
+  --transcribe-arg ARG    provider=command only; repeatable arg for --transcribe-bin (audio path appended automatically)
+  --print-session-env     print per-session export lines for transcript file isolation and exit
   --discard               record + transcribe but do not write transcript file
   --print-only            print transcript to stdout (implies --discard)
   --confirm               ask before writing transcript file (decline => discard)
@@ -80,8 +83,14 @@ Examples:
   # Paste into a specific app (activates it first)
   goose-voice-ptt.sh --insert-mode paste --paste-app "iTerm2"
 
-  # Custom command provider
+  # Custom command provider (legacy shell-string mode)
   goose-voice-ptt.sh --provider command --transcribe-cmd 'my_transcriber'
+
+  # Custom command provider (safer argv mode)
+  goose-voice-ptt.sh --provider command --transcribe-bin my_transcriber --transcribe-arg --fast
+
+  # Print per-session env exports (run: eval "$(...)")
+  goose-voice-ptt.sh --print-session-env
 
   # Validate setup and show resolved insertion/transcript targets without recording
   goose-voice-ptt.sh --dry-run
@@ -122,6 +131,9 @@ PROVIDER="${GOOSE_VOICE_PROVIDER:-local}"
 MODEL_PATH="${GOOSE_VOICE_MODEL:-$HOME/.openclaw/models/whisper-cpp/ggml-base.en.bin}"
 LANG="${GOOSE_VOICE_LANG:-en}"
 TRANSCRIBE_CMD="${GOOSE_VOICE_TRANSCRIBE_CMD:-}"
+TRANSCRIBE_BIN="${GOOSE_VOICE_TRANSCRIBE_BIN:-}"
+TRANSCRIBE_ARGS=()
+PRINT_SESSION_ENV=0
 DISCARD=0
 PRINT_ONLY=0
 CONFIRM=0
@@ -285,6 +297,26 @@ while [[ $# -gt 0 ]]; do
       TRANSCRIBE_CMD="${2}"
       shift 2
       ;;
+    --transcribe-bin)
+      if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--transcribe-bin requires an executable path." >&2
+        exit 8
+      fi
+      TRANSCRIBE_BIN="${2}"
+      shift 2
+      ;;
+    --transcribe-arg)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "--transcribe-arg requires a value (repeatable)." >&2
+        exit 8
+      fi
+      TRANSCRIBE_ARGS+=("${2}")
+      shift 2
+      ;;
+    --print-session-env)
+      PRINT_SESSION_ENV=1
+      shift
+      ;;
     --discard)
       DISCARD=1
       shift
@@ -323,6 +355,44 @@ require_cmd() {
     echo "$1 not found in PATH" >&2
     exit 2
   fi
+}
+
+default_session_key() {
+  local raw=""
+
+  if [[ -n "${TMUX_PANE:-}" ]]; then
+    raw="tmux_${TMUX_PANE}"
+  else
+    local tty_path
+    tty_path="$(tty 2>/dev/null || true)"
+    if [[ -n "$tty_path" && "$tty_path" != "not a tty" ]]; then
+      raw="tty_${tty_path}"
+    fi
+  fi
+
+  if [[ -z "$raw" ]]; then
+    raw="pid_${PPID:-$$}"
+  fi
+
+  printf "%s" "$raw" | tr '/: ' '___' | tr -cd 'A-Za-z0-9._-'
+}
+
+default_session_transcript_file() {
+  local session_key
+  session_key="$(default_session_key)"
+  echo "/tmp/goose-cli-voice-transcript-${session_key}.txt"
+}
+
+print_session_env() {
+  local transcript_path
+  transcript_path="$(default_session_transcript_file)"
+
+  cat <<EOF
+export GOOSE_CLI_VOICE_TRANSCRIPT_FILE="${transcript_path}"
+export GOOSE_VOICE_PROVIDER="${PROVIDER}"
+export GOOSE_VOICE_MODEL="${MODEL_PATH}"
+# Optional: export GOOSE_CLI_VOICE_AUTO_SUBMIT=1
+EOF
 }
 
 status_line() {
@@ -737,6 +807,11 @@ if [[ "$LIST_REASON_BUCKETS" -eq 1 ]]; then
   exit 0
 fi
 
+if [[ "$PRINT_SESSION_ENV" -eq 1 ]]; then
+  print_session_env
+  exit 0
+fi
+
 require_cmd ffmpeg
 
 if [[ "$LIST_DEVICES" -eq 1 ]]; then
@@ -778,8 +853,22 @@ fi
 if [[ "$PROVIDER" == "local" ]]; then
   require_cmd whisper-cli
 elif [[ "$PROVIDER" == "command" ]]; then
-  if [[ -z "$TRANSCRIBE_CMD" ]]; then
-    echo "--provider command requires --transcribe-cmd" >&2
+  if [[ -n "$TRANSCRIBE_BIN" && -n "$TRANSCRIBE_CMD" ]]; then
+    echo "--provider command supports either --transcribe-bin (safer argv mode) or --transcribe-cmd (legacy shell mode), not both." >&2
+    exit 3
+  fi
+
+  if [[ "${#TRANSCRIBE_ARGS[@]}" -gt 0 && -z "$TRANSCRIBE_BIN" ]]; then
+    echo "--transcribe-arg requires --transcribe-bin when using --provider command." >&2
+    exit 3
+  fi
+
+  if [[ -n "$TRANSCRIBE_BIN" ]]; then
+    require_cmd "$TRANSCRIBE_BIN"
+  elif [[ -n "$TRANSCRIBE_CMD" ]]; then
+    :
+  else
+    echo "--provider command requires --transcribe-bin or --transcribe-cmd" >&2
     exit 3
   fi
 else
@@ -847,7 +936,18 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "   Model: ${MODEL_PATH}"
     echo "   Language: ${LANG}"
   else
-    echo "   Command: ${TRANSCRIBE_CMD}"
+    if [[ -n "$TRANSCRIBE_BIN" ]]; then
+      echo "   Command mode: argv"
+      echo "   Command bin: ${TRANSCRIBE_BIN}"
+      if [[ "${#TRANSCRIBE_ARGS[@]}" -gt 0 ]]; then
+        echo "   Command args: ${TRANSCRIBE_ARGS[*]}"
+      else
+        echo "   Command args: (none)"
+      fi
+    else
+      echo "   Command mode: shell-string"
+      echo "   Command: ${TRANSCRIBE_CMD}"
+    fi
   fi
   echo "   Auto-submit: ${AUTO_SUBMIT}"
   echo "   Clear status: ${CLEAR_STATUS}"
@@ -978,16 +1078,41 @@ transcribe_local() {
 }
 
 transcribe_command() {
-  # shellcheck disable=SC2086
-  bash -lc "$TRANSCRIBE_CMD \"$AUDIO_PATH\""
+  if [[ -n "$TRANSCRIBE_BIN" ]]; then
+    "$TRANSCRIBE_BIN" "${TRANSCRIBE_ARGS[@]}" "$AUDIO_PATH"
+  else
+    # Legacy shell-string mode for compatibility.
+    # shellcheck disable=SC2086
+    bash -lc "$TRANSCRIBE_CMD \"$AUDIO_PATH\""
+  fi
 }
 
 write_transcript_file() {
   local text="$1"
-  mkdir -p "$(dirname "$TRANSCRIPT_FILE")"
-  printf "%s" "$text" >"$TRANSCRIPT_FILE"
+  local transcript_dir queue_dir queue_item tmp_queue_file legacy_tmp
+  local ts
+
+  transcript_dir="$(dirname "$TRANSCRIPT_FILE")"
+  mkdir -p "$transcript_dir"
+
+  # Queue-first write to avoid clobber/races across rapid runs.
+  queue_dir="${TRANSCRIPT_FILE}.d"
+  mkdir -p "$queue_dir"
+
+  ts="$(date +%s)-${RANDOM}-${PPID:-$$}"
+
+  queue_item="${queue_dir}/${ts}.txt"
+  tmp_queue_file="${queue_item}.tmp"
+  printf "%s" "$text" >"$tmp_queue_file"
+  mv "$tmp_queue_file" "$queue_item"
+
+  # Legacy mirror for older Goose builds that only read the flat transcript file.
+  legacy_tmp="${TRANSCRIPT_FILE}.tmp.${PPID:-$$}"
+  printf "%s" "$text" >"$legacy_tmp"
+  mv "$legacy_tmp" "$TRANSCRIPT_FILE"
 
   echo "✅ Transcript saved to: $TRANSCRIPT_FILE"
+  echo "   Queue item: ${queue_item}"
   echo "   Launch/return to Goose CLI and press ENTER to accept or edit the prefill."
   if [[ "$AUTO_SUBMIT" -eq 1 ]]; then
     echo "   Auto-submit requested via trailing 'submit'."

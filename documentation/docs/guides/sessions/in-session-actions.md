@@ -275,6 +275,7 @@ Speak to goose directly instead of typing your prompts.
            - On macOS: `--insert-mode auto` uses focused-app paste (`Cmd+V`) via clipboard automation when tmux is unavailable.
            - If `--paste-app "APP"` is set, `--insert-mode auto` prefers the focused-app paste path (even when tmux is available), then falls back to file mode on failure.
            - Fallback: transcript is written to `GOOSE_CLI_VOICE_TRANSCRIPT_FILE` for next-prompt prefill.
+             The bridge now also writes queue items under `<transcript-file>.d/` so rapid back-to-back runs do not clobber each other.
 
         Helpful options:
         - `--list-devices` to find microphone indices
@@ -288,7 +289,10 @@ Speak to goose directly instead of typing your prompts.
         - `--min-duration SEC` to reject accidental tap-length clips (use `0` to disable)
         - `--discard` / `--print-only` for safe dry runs
         - `--confirm` to approve or discard before writing transcript into Goose
-        - `--provider local|command` with `--model`, `--lang`, and `--transcribe-cmd`
+        - `--provider local|command` with `--model`, `--lang`, and either:
+          - `--transcribe-cmd` (legacy shell-string command mode), or
+          - `--transcribe-bin` + repeatable `--transcribe-arg` (safer argv mode)
+        - `--print-session-env` to emit per-session exports for transcript path isolation (run via `eval "$(scripts/goose-voice-ptt.sh --print-session-env)"`)
 
         Troubleshooting and preflight:
         - Run `scripts/goose-voice-ptt.sh --dry-run --ptt-mode hold` before your first session to verify keywatch/accessibility readiness.

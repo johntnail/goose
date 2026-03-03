@@ -6,8 +6,10 @@ use goose::config::Config;
 use rustyline::Editor;
 use shlex;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
 pub enum InputResult {
@@ -140,13 +142,102 @@ fn voice_auto_submit_enabled() -> bool {
         .unwrap_or(false)
 }
 
+fn unique_claim_suffix() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{}", std::process::id(), now)
+}
+
+fn voice_queue_dir_for_path(path: &Path) -> PathBuf {
+    let mut os: OsString = path.as_os_str().to_os_string();
+    os.push(".d");
+    PathBuf::from(os)
+}
+
+fn claim_path_for(target: &Path) -> Option<PathBuf> {
+    let file_name = target.file_name()?.to_string_lossy();
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    Some(parent.join(format!(".claim-{}-{}", unique_claim_suffix(), file_name)))
+}
+
+fn read_and_remove_claimed(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let _ = std::fs::remove_file(path);
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn claim_next_queued_transcript(path: &Path) -> Option<PathBuf> {
+    let queue_dir = voice_queue_dir_for_path(path);
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(queue_dir)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|p| p.is_file())
+        .collect();
+
+    entries.sort_by(|a, b| {
+        let a_name = a
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let b_name = b
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        a_name.cmp(&b_name)
+    });
+
+    for item in entries {
+        let item_name = item
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        if item_name.starts_with(".claim-") {
+            continue;
+        }
+
+        let claim_path = claim_path_for(&item)?;
+        if std::fs::rename(&item, &claim_path).is_ok() {
+            return Some(claim_path);
+        }
+    }
+
+    None
+}
+
+fn claim_legacy_transcript(path: &Path) -> Option<PathBuf> {
+    if !path.exists() {
+        return None;
+    }
+
+    let claim_path = claim_path_for(path)?;
+    if std::fs::rename(path, &claim_path).is_ok() {
+        Some(claim_path)
+    } else {
+        None
+    }
+}
+
 fn read_voice_transcript_from_file() -> Option<String> {
     let configured_path = std::env::var(VOICE_TRANSCRIPT_ENV).ok();
     let path = resolve_voice_transcript_path(configured_path.as_deref())?;
 
-    let text = std::fs::read_to_string(&path).ok()?;
-    let _ = std::fs::write(&path, "");
-    Some(text)
+    if let Some(claimed) = claim_next_queued_transcript(&path) {
+        if let Some(text) = read_and_remove_claimed(&claimed) {
+            // Clear legacy mirror if present so queue-first delivery does not replay stale text.
+            let _ = std::fs::remove_file(&path);
+            return Some(text);
+        }
+    }
+
+    let claimed = claim_legacy_transcript(&path)?;
+    read_and_remove_claimed(&claimed)
 }
 
 fn voice_input_action(
@@ -561,8 +652,9 @@ Ctrl+{newline_key} - Add a newline (configurable via GOOSE_CLI_NEWLINE_KEY)
 Up/Down arrows - Navigate through command history
 
 Voice input:
-GOOSE_CLI_VOICE_TRANSCRIPT_FILE - Read transcript from file into prompt (defaults to /tmp/goose-cli-voice-transcript.txt when unset)
-GOOSE_CLI_VOICE_AUTO_SUBMIT - Auto-submit transcript when set (truthy)"
+GOOSE_CLI_VOICE_TRANSCRIPT_FILE - Read transcript from queue/file bridge into prompt (defaults to /tmp/goose-cli-voice-transcript.txt when unset; queue dir uses .d suffix)
+GOOSE_CLI_VOICE_AUTO_SUBMIT - Auto-submit transcript when set (truthy)
+Tip: use a per-session transcript file path to avoid cross-terminal collisions (e.g. run scripts/goose-voice-ptt.sh --print-session-env and eval the output)"
     );
 }
 
@@ -590,6 +682,8 @@ Configure with: goose configure set goose_prompt_editor \"vim\""
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_handle_slash_command() {
@@ -878,5 +972,47 @@ mod tests {
         {
             assert_eq!(prompt, "🪿 ");
         }
+    }
+
+    #[test]
+    fn test_voice_queue_dir_suffix() {
+        let base = PathBuf::from("/tmp/goose-cli-voice-transcript.txt");
+        let queue = voice_queue_dir_for_path(&base);
+        assert_eq!(queue.to_string_lossy(), "/tmp/goose-cli-voice-transcript.txt.d");
+    }
+
+    #[test]
+    fn test_claim_next_queued_transcript_consumes_oldest() {
+        let dir = tempdir().expect("tempdir");
+        let base = dir.path().join("voice.txt");
+        let queue = voice_queue_dir_for_path(&base);
+        fs::create_dir_all(&queue).expect("queue dir");
+
+        fs::write(queue.join("0002.txt"), "second").expect("write second");
+        fs::write(queue.join("0001.txt"), "first").expect("write first");
+
+        let first_claim = claim_next_queued_transcript(&base).expect("first claim");
+        let first = read_and_remove_claimed(&first_claim).expect("first text");
+        assert_eq!(first, "first");
+
+        let second_claim = claim_next_queued_transcript(&base).expect("second claim");
+        let second = read_and_remove_claimed(&second_claim).expect("second text");
+        assert_eq!(second, "second");
+
+        assert!(claim_next_queued_transcript(&base).is_none());
+    }
+
+    #[test]
+    fn test_claim_legacy_transcript_renames_atomically() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("legacy.txt");
+        fs::write(&path, "legacy transcript").expect("write legacy transcript");
+
+        let claimed = claim_legacy_transcript(&path).expect("legacy claim path");
+        assert!(!path.exists(), "legacy file should be moved into claim path");
+
+        let text = read_and_remove_claimed(&claimed).expect("claimed transcript text");
+        assert_eq!(text, "legacy transcript");
+        assert!(!claimed.exists(), "claimed file should be removed after read");
     }
 }

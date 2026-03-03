@@ -1268,6 +1268,22 @@ for expected_reason in "${EXPECTED_REASON_BUCKETS[@]}"; do
 done
 pass "reason-buckets command emits canonical machine-readable reason list"
 
+SESSION_ENV_OUT="$(${VOICE_SCRIPT} --print-session-env 2>&1)"
+require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_CLI_VOICE_TRANSCRIPT_FILE=" "print-session-env"
+require_output_contains "${SESSION_ENV_OUT}" "export GOOSE_VOICE_PROVIDER=" "print-session-env"
+pass "print-session-env emits per-session export hints"
+
+ARGV_DRY_OUT="$(${VOICE_SCRIPT} --dry-run --provider command --transcribe-bin cat --transcribe-arg --dummy 2>&1)"
+require_output_contains "${ARGV_DRY_OUT}" "Command mode: argv" "command argv dry-run"
+require_output_contains "${ARGV_DRY_OUT}" "Command bin: cat" "command argv dry-run"
+pass "provider command argv mode dry-run is wired"
+
+run_failure_case "--transcribe-arg requires --transcribe-bin" 3 \
+  "${VOICE_SCRIPT}" --dry-run --provider command --transcribe-arg --dummy --transcribe-cmd cat
+
+run_failure_case "--provider command rejects mixed --transcribe-bin and --transcribe-cmd" 3 \
+  "${VOICE_SCRIPT}" --dry-run --provider command --transcribe-bin cat --transcribe-cmd cat
+
 # Auto mode without tmux context should resolve to paste on supported macOS hosts, else file.
 AUTO_OUT="$(${VOICE_SCRIPT} --dry-run --insert-mode auto --provider command --transcribe-cmd cat 2>&1)"
 if can_use_macos_paste; then
