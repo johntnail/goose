@@ -288,6 +288,7 @@ Speak to goose directly instead of typing your prompts.
 
         Troubleshooting and preflight:
         - Run `scripts/goose-voice-ptt.sh --dry-run --ptt-mode hold` before your first session to verify keywatch/accessibility readiness.
+        - Maintainers can run `scripts/test_goose_voice_ptt_dry_run.sh` for quick non-mic checks, including a simulated auto-mode fallback-to-file path when focused-app paste fails.
         - If hold-key permissions are unavailable, Goose prints a warning and falls back to ENTER mode by default.
         - Add `--hold-strict` to fail fast instead of falling back when hold-key mode is unavailable.
         - When `--duration SEC` is set, fixed-duration capture takes priority and hold-key readiness checks are skipped.

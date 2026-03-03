@@ -40,6 +40,26 @@ require_output_contains() {
   fi
 }
 
+require_file_equals() {
+  local file_path="$1"
+  local expected="$2"
+  local label="$3"
+
+  if [[ ! -f "${file_path}" ]]; then
+    echo "${label}: expected file to exist: ${file_path}" >&2
+    exit 1
+  fi
+
+  local actual
+  actual="$(cat "${file_path}")"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "${label}: file contents mismatch" >&2
+    echo "expected: ${expected}" >&2
+    echo "actual:   ${actual}" >&2
+    exit 1
+  fi
+}
+
 run_success_case() {
   local label="$1"
   shift
@@ -72,6 +92,71 @@ run_failure_case() {
   pass "${label}"
 }
 
+run_auto_mode_paste_fallback_smoke() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    skip "auto-mode paste fallback smoke requires macOS"
+    return
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${@: -1}"
+mkdir -p "$(dirname "${out}")"
+printf "fake-audio" >"${out}"
+EOF
+  chmod +x "${fake_bin}/ffmpeg"
+
+  cat >"${fake_bin}/pbcopy" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+EOF
+  chmod +x "${fake_bin}/pbcopy"
+
+  cat >"${fake_bin}/osascript" <<'EOF'
+#!/usr/bin/env bash
+# Simulate inaccessible System Events / failed paste injection.
+cat >/dev/null || true
+exit 1
+EOF
+  chmod +x "${fake_bin}/osascript"
+
+  local transcript_file="${tmp_dir}/fallback-transcript.txt"
+
+  set +e
+  local out
+  out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode auto \
+    --provider command \
+    --transcribe-cmd 'printf "fallback smoke transcript\\n"' \
+    --transcript-file "${transcript_file}" 2>&1)"
+  local rc=$?
+  set -e
+
+  if [[ "${rc}" -ne 0 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "auto-mode paste fallback smoke: expected rc 0, got ${rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${out}" "Focused-app paste failed; falling back to transcript file mode." "auto-mode paste fallback smoke"
+  require_output_contains "${out}" "✅ Transcript saved to: ${transcript_file}" "auto-mode paste fallback smoke"
+  require_file_equals "${transcript_file}" "fallback smoke transcript" "auto-mode paste fallback smoke"
+
+  rm -rf "${tmp_dir}"
+  pass "auto-mode falls back to file mode when focused-app paste fails"
+}
+
 BASE_CMD=("${VOICE_SCRIPT}" --dry-run --provider command --transcribe-cmd cat)
 
 # Default/file dry-run should succeed and keep file insertion.
@@ -102,6 +187,8 @@ else
   run_failure_case "explicit paste mode rejects unsupported hosts" 13 \
     "${VOICE_SCRIPT}" --dry-run --insert-mode paste --provider command --transcribe-cmd cat
 fi
+
+run_auto_mode_paste_fallback_smoke
 
 # Hold mode dry-run should surface preflight readiness details.
 HOLD_OUT="$(${VOICE_SCRIPT} --dry-run --ptt-mode hold --provider command --transcribe-cmd cat 2>&1)"
