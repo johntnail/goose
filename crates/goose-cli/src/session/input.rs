@@ -1,4 +1,5 @@
 use super::completion::GooseCompleter;
+use super::dictation_text::apply_dictation_transcript;
 use super::{CompletionCache, HintStatus};
 use anyhow::Result;
 use goose::config::Config;
@@ -87,6 +88,79 @@ pub fn get_newline_key() -> char {
         .unwrap_or('j')
 }
 
+const VOICE_TRANSCRIPT_ENV: &str = "GOOSE_CLI_VOICE_TRANSCRIPT_FILE";
+const VOICE_AUTO_SUBMIT_ENV: &str = "GOOSE_CLI_VOICE_AUTO_SUBMIT";
+
+#[derive(Debug, PartialEq, Eq)]
+enum VoiceInputAction {
+    AutoSubmit(String),
+    Prefill(String),
+}
+
+fn is_truthy_env_value(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() {
+        return false;
+    }
+    let value = value.to_ascii_lowercase();
+    !matches!(value.as_str(), "0" | "false" | "no" | "off")
+}
+
+fn voice_auto_submit_enabled() -> bool {
+    std::env::var(VOICE_AUTO_SUBMIT_ENV)
+        .ok()
+        .map(|value| is_truthy_env_value(&value))
+        .unwrap_or(false)
+}
+
+fn read_voice_transcript_from_file() -> Option<String> {
+    let path = std::env::var(VOICE_TRANSCRIPT_ENV).ok()?;
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    let _ = std::fs::write(path, "");
+    Some(text)
+}
+
+fn voice_input_action(
+    existing_input: &str,
+    transcript: &str,
+    force_auto_submit: bool,
+) -> Option<VoiceInputAction> {
+    let insertion = apply_dictation_transcript(existing_input, transcript)?;
+    if insertion.merged_text.trim().is_empty() {
+        return None;
+    }
+    let auto_submit = insertion.auto_submit || force_auto_submit;
+    if auto_submit {
+        Some(VoiceInputAction::AutoSubmit(insertion.merged_text))
+    } else {
+        Some(VoiceInputAction::Prefill(insertion.merged_text))
+    }
+}
+
+fn read_line(
+    editor: &mut Editor<GooseCompleter, rustyline::history::DefaultHistory>,
+    prompt: &str,
+    initial: Option<&str>,
+) -> Result<Option<String>> {
+    let input = match initial {
+        Some(text) => editor.readline_with_initial(prompt, (text, "")),
+        None => editor.readline(prompt),
+    };
+
+    match input {
+        Ok(text) => Ok(Some(text)),
+        Err(e) => match e {
+            rustyline::error::ReadlineError::Interrupted => Ok(None),
+            rustyline::error::ReadlineError::Eof => Ok(None),
+            _ => Err(e.into()),
+        },
+    }
+}
+
 pub fn get_input(
     editor: &mut Editor<GooseCompleter, rustyline::history::DefaultHistory>,
     conversation_messages: Option<&Vec<String>>,
@@ -125,14 +199,26 @@ pub fn get_input(
     );
 
     let prompt = get_input_prompt_string();
+    let voice_action = read_voice_transcript_from_file()
+        .and_then(|transcript| voice_input_action("", &transcript, voice_auto_submit_enabled()));
 
-    let input = match editor.readline(&prompt) {
-        Ok(text) => text,
-        Err(e) => match e {
-            rustyline::error::ReadlineError::Interrupted => return Ok(InputResult::Exit),
-            rustyline::error::ReadlineError::Eof => return Ok(InputResult::Exit),
-            _ => return Err(e.into()),
-        },
+    let input = if let Some(action) = voice_action {
+        match action {
+            VoiceInputAction::AutoSubmit(message) => {
+                editor.add_history_entry(message.as_str())?;
+                return Ok(InputResult::Message(message));
+            }
+            VoiceInputAction::Prefill(prefill) => match read_line(editor, &prompt, Some(prefill.as_str()))?
+            {
+                Some(text) => text,
+                None => return Ok(InputResult::Exit),
+            },
+        }
+    } else {
+        match read_line(editor, &prompt, None)? {
+            Some(text) => text,
+            None => return Ok(InputResult::Exit),
+        }
     };
 
     // Add valid input to history (history saving to file is handled in the Session::interactive method)
@@ -186,14 +272,26 @@ fn get_regular_input(
     );
 
     let prompt = get_input_prompt_string();
+    let voice_action = read_voice_transcript_from_file()
+        .and_then(|transcript| voice_input_action("", &transcript, voice_auto_submit_enabled()));
 
-    let input = match editor.readline(&prompt) {
-        Ok(text) => text,
-        Err(e) => match e {
-            rustyline::error::ReadlineError::Interrupted => return Ok(InputResult::Exit),
-            rustyline::error::ReadlineError::Eof => return Ok(InputResult::Exit),
-            _ => return Err(e.into()),
-        },
+    let input = if let Some(action) = voice_action {
+        match action {
+            VoiceInputAction::AutoSubmit(message) => {
+                editor.add_history_entry(message.as_str())?;
+                return Ok(InputResult::Message(message));
+            }
+            VoiceInputAction::Prefill(prefill) => match read_line(editor, &prompt, Some(prefill.as_str()))?
+            {
+                Some(text) => text,
+                None => return Ok(InputResult::Exit),
+            },
+        }
+    } else {
+        match read_line(editor, &prompt, None)? {
+            Some(text) => text,
+            None => return Ok(InputResult::Exit),
+        }
     };
 
     // Add valid input to history (history saving to file is handled in the Session::interactive method)
@@ -435,7 +533,11 @@ fn print_help() {
 Navigation:
 Ctrl+C - Clear current line if text is entered, otherwise exit the session
 Ctrl+{newline_key} - Add a newline (configurable via GOOSE_CLI_NEWLINE_KEY)
-Up/Down arrows - Navigate through command history"
+Up/Down arrows - Navigate through command history
+
+Voice input:
+GOOSE_CLI_VOICE_TRANSCRIPT_FILE - Read transcript from file into prompt
+GOOSE_CLI_VOICE_AUTO_SUBMIT - Auto-submit transcript when set (truthy)"
     );
 }
 
@@ -689,6 +791,38 @@ mod tests {
         // Test recipe with invalid extension
         let result = handle_slash_command("/recipe /path/to/file.txt");
         assert!(matches!(result, Some(InputResult::Retry)));
+    }
+
+    #[test]
+    fn test_voice_transcript_prefill_text() {
+        let action = voice_input_action("", "hello world", false);
+        match action {
+            Some(VoiceInputAction::Prefill(text)) => assert_eq!(text, "hello world"),
+            _ => panic!("Expected prefill action"),
+        }
+    }
+
+    #[test]
+    fn test_voice_transcript_submit_suffix_auto_submits() {
+        let action = voice_input_action("", "Ship this please, submit!!!", false);
+        match action {
+            Some(VoiceInputAction::AutoSubmit(text)) => assert_eq!(text, "Ship this please"),
+            _ => panic!("Expected auto-submit action"),
+        }
+    }
+
+    #[test]
+    fn test_voice_transcript_force_auto_submit() {
+        let action = voice_input_action("", "Ship it", true);
+        match action {
+            Some(VoiceInputAction::AutoSubmit(text)) => assert_eq!(text, "Ship it"),
+            _ => panic!("Expected auto-submit action"),
+        }
+    }
+
+    #[test]
+    fn test_voice_transcript_submit_only_no_existing_input() {
+        assert!(voice_input_action("", "submit", false).is_none());
     }
 
     #[test]
