@@ -263,16 +263,20 @@ Speak to goose directly instead of typing your prompts.
         2. In another terminal, run:
 
            ```bash
-           scripts/goose-voice-ptt.sh --ptt-mode hold --ptt-key space
+           scripts/goose-voice-ptt.sh --ptt-mode hold --ptt-key space --insert-mode auto
            ```
 
-        3. Hold `Space` to record, release to transcribe, then return to goose.
-        4. goose pre-fills the next prompt from `GOOSE_CLI_VOICE_TRANSCRIPT_FILE`.
+        3. Hold `Space` to record, release to transcribe.
+        4. Insertion behavior:
+           - In tmux (`--insert-mode auto`): transcript is pasted directly into the active pane input (fast path).
+           - Outside tmux: transcript is written to `GOOSE_CLI_VOICE_TRANSCRIPT_FILE` for next-prompt prefill.
 
         Helpful options:
         - `--list-devices` to find microphone indices
         - `--mic-index N` to select a microphone by index
         - `--mic-name "TEXT"` to select first matching microphone name (case-insensitive)
+        - `--insert-mode file|tmux|auto` to force/choose transcript delivery mode
+        - `--tmux-target pane` to paste into a specific tmux pane/window
         - `--auto-submit` to send immediately after insertion
         - `--max-duration SEC` for a hard safety cap
         - `--discard` / `--print-only` for safe dry runs
@@ -286,7 +290,7 @@ Speak to goose directly instead of typing your prompts.
 
         Current gaps vs Claude Code native voice:
         - No in-line live waveform/timer in terminal input.
-        - Transcript insertion happens at next prompt prefill (not true mid-line cursor injection).
+        - Mid-line cursor-equivalent insertion is tmux-only today; outside tmux, Goose falls back to next-prompt prefill via transcript file.
         - Hold-key mode may require macOS accessibility permissions for key-state detection.
 
         For script arguments and examples, run:
