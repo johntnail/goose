@@ -31,7 +31,7 @@ Options:
   --transcript-file PATH  transcript output file (default noted above)
   --insert-mode MODE      transcript delivery: file|tmux|paste|auto (default: file)
   --tmux-target TARGET    tmux pane target for insert-mode tmux/auto
-  --paste-app NAME        paste mode: activate app before paste (e.g., "iTerm2")
+  --paste-app NAME        paste mode: activate app before paste (e.g., "iTerm2"); in auto mode, prefers paste path
   --auto-submit           file mode: append " submit"; tmux/paste mode: press ENTER after paste
   --clear-status          clear transient status lines before showing transcript
   --provider NAME         transcription provider: local|command (default: local)
@@ -481,7 +481,9 @@ validate_insert_mode() {
       RESOLVED_INSERT_MODE="paste"
       ;;
     auto)
-      if command -v tmux >/dev/null 2>&1 && [[ -n "${TMUX:-}" || -n "$TMUX_TARGET" ]]; then
+      if [[ -n "$PASTE_APP" ]] && can_use_macos_paste; then
+        RESOLVED_INSERT_MODE="paste"
+      elif command -v tmux >/dev/null 2>&1 && [[ -n "${TMUX:-}" || -n "$TMUX_TARGET" ]]; then
         RESOLVED_INSERT_MODE="tmux"
       elif can_use_macos_paste; then
         RESOLVED_INSERT_MODE="paste"

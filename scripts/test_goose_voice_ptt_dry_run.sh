@@ -98,6 +98,39 @@ run_failure_case() {
   pass "${label}"
 }
 
+run_auto_mode_paste_app_prefers_paste_dry_run() {
+  if ! can_use_macos_paste; then
+    skip "auto-mode paste-app preference check requires macOS paste support"
+    return
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/tmux" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+EOF
+  chmod +x "${fake_bin}/tmux"
+
+  local out
+  out="$(PATH="${fake_bin}:${PATH}" env TMUX=/tmp/fake-tmux "${VOICE_SCRIPT}" \
+    --dry-run \
+    --insert-mode auto \
+    --paste-app iTerm2 \
+    --provider command \
+    --transcribe-cmd cat 2>&1)"
+
+  require_output_contains "${out}" "Insert mode: auto -> paste" "auto-mode paste-app preference dry-run"
+  require_output_contains "${out}" "Paste target: iTerm2 (activated before paste)" "auto-mode paste-app preference dry-run"
+
+  rm -rf "${tmp_dir}"
+  pass "auto mode prefers paste path when --paste-app is set"
+}
+
 run_auto_mode_paste_fallback_smoke() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
     skip "auto-mode paste fallback smoke requires macOS"
@@ -857,6 +890,7 @@ else
     "${VOICE_SCRIPT}" --dry-run --insert-mode paste --provider command --transcribe-cmd cat
 fi
 
+run_auto_mode_paste_app_prefers_paste_dry_run
 run_auto_mode_paste_fallback_smoke
 run_launcher_status_summary_smoke
 run_mic_name_resolution_smoke
