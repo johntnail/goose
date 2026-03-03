@@ -18,6 +18,7 @@ Defaults:
 
 Options:
   --mic-index N           avfoundation audio index (default: 0)
+  --list-devices          list avfoundation audio devices and exit
   --duration SEC          fixed record duration in seconds (non-interactive)
   --max-duration SEC      safety cap for interactive record mode (default: 30)
   --ptt-mode MODE         interactive mode: enter|hold (default: enter)
@@ -43,6 +44,9 @@ Examples:
   # Auto-send transcript after insertion
   goose-voice-ptt.sh --auto-submit
 
+  # List microphone device indices
+  goose-voice-ptt.sh --list-devices
+
   # Use a custom transcript path for an active Goose session
   goose-voice-ptt.sh --transcript-file /tmp/goose-voice.txt
 
@@ -52,6 +56,7 @@ EOF
 }
 
 MIC_INDEX="0"
+LIST_DEVICES=0
 DURATION=""
 MAX_DURATION="30"
 PTT_MODE="${GOOSE_VOICE_PTT_MODE:-enter}"
@@ -73,6 +78,10 @@ while [[ $# -gt 0 ]]; do
     --mic-index)
       MIC_INDEX="${2:-}"
       shift 2
+      ;;
+    --list-devices)
+      LIST_DEVICES=1
+      shift
       ;;
     --duration)
       DURATION="${2:-}"
@@ -196,7 +205,28 @@ fallback_hold_unavailable() {
   record_interactive_enter
 }
 
+list_audio_devices() {
+  local out
+  out="$(ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 || true)"
+
+  echo "🎤 Available avfoundation audio devices:"
+  if grep -q "AVFoundation audio devices" <<<"$out"; then
+    awk '/AVFoundation audio devices:/{show=1} show{print}' <<<"$out" | grep "AVFoundation indev" || true
+  else
+    echo "$out"
+  fi
+
+  echo
+  echo "Use --mic-index N with goose-voice-ptt.sh (where N is the audio device index)."
+}
+
 require_cmd ffmpeg
+
+if [[ "$LIST_DEVICES" -eq 1 ]]; then
+  list_audio_devices
+  exit 0
+fi
+
 validate_mode
 
 if [[ "$PTT_MODE" == "hold" ]]; then
