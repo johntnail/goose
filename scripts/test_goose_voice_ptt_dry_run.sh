@@ -3,9 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VOICE_SCRIPT="${ROOT_DIR}/scripts/goose-voice-ptt.sh"
+LAUNCH_SCRIPT="${ROOT_DIR}/scripts/goose-voice-ptt-launch.sh"
 
 if [[ ! -x "${VOICE_SCRIPT}" ]]; then
   echo "voice script not executable: ${VOICE_SCRIPT}" >&2
+  exit 1
+fi
+
+if [[ ! -x "${LAUNCH_SCRIPT}" ]]; then
+  echo "launcher script not executable: ${LAUNCH_SCRIPT}" >&2
   exit 1
 fi
 
@@ -163,6 +169,94 @@ EOF
   pass "auto-mode falls back to file mode when focused-app paste fails"
 }
 
+run_launcher_status_summary_smoke() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    skip "launcher summary smoke requires macOS"
+    return
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${@: -1}"
+mkdir -p "$(dirname "${out}")"
+printf "fake-audio" >"${out}"
+EOF
+  chmod +x "${fake_bin}/ffmpeg"
+
+  cat >"${fake_bin}/pbcopy" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+EOF
+  chmod +x "${fake_bin}/pbcopy"
+
+  cat >"${fake_bin}/osascript" <<'EOF'
+#!/usr/bin/env bash
+# Simulate inaccessible System Events / failed paste injection.
+cat >/dev/null || true
+exit 1
+EOF
+  chmod +x "${fake_bin}/osascript"
+
+  local transcript_file="${tmp_dir}/launcher-fallback-transcript.txt"
+
+  set +e
+  local fallback_out
+  fallback_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode auto \
+    --provider command \
+    --transcribe-cmd 'printf "launcher fallback smoke transcript\\n"' \
+    --transcript-file "${transcript_file}" 2>&1)"
+  local fallback_rc=$?
+  set -e
+
+  if [[ "${fallback_rc}" -ne 0 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "launcher fallback smoke: expected rc 0, got ${fallback_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${fallback_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${fallback_out}" "⚠️  Voice fast path (paste) failed; fell back to file bridge." "launcher fallback smoke"
+  require_output_contains "${fallback_out}" "Hint: grant Accessibility/Input Monitoring to your terminal and osascript host, then retry." "launcher fallback smoke"
+  require_file_equals "${transcript_file}" "launcher fallback smoke transcript" "launcher fallback smoke"
+
+  set +e
+  local error_out
+  error_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --provider command \
+    --transcribe-cmd 'printf "launcher error smoke transcript\\n"' 2>&1)"
+  local error_rc=$?
+  set -e
+
+  if [[ "${error_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "launcher error smoke: expected rc 14, got ${error_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${error_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${error_out}" "❌ Voice run failed (delivery=paste, reason=accessibility_unavailable)." "launcher error smoke"
+  require_output_contains "${error_out}" "Hint: grant Accessibility/Input Monitoring to your terminal and osascript host, then retry." "launcher error smoke"
+
+  rm -rf "${tmp_dir}"
+  pass "launcher emits concise fallback/error summaries for accessibility failures"
+}
+
 BASE_CMD=("${VOICE_SCRIPT}" --dry-run --provider command --transcribe-cmd cat)
 
 # Default/file dry-run should succeed and keep file insertion.
@@ -202,6 +296,7 @@ else
 fi
 
 run_auto_mode_paste_fallback_smoke
+run_launcher_status_summary_smoke
 
 # Hold mode dry-run should surface preflight readiness details.
 HOLD_OUT="$(${VOICE_SCRIPT} --dry-run --ptt-mode hold --provider command --transcribe-cmd cat 2>&1)"
