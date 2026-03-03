@@ -97,6 +97,9 @@ Examples:
   # Print per-session env exports (run: eval "$(...)")
   goose-voice-ptt.sh --print-session-env
 
+  # One-command Goose session bootstrap with the same env wiring
+  goose-voice-ptt-session.sh --session-key demo
+
   # Validate setup and show resolved insertion/transcript targets without recording
   goose-voice-ptt.sh --dry-run
 
