@@ -6,6 +6,7 @@ use goose::config::Config;
 use rustyline::Editor;
 use shlex;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -91,6 +92,32 @@ pub fn get_newline_key() -> char {
 const VOICE_TRANSCRIPT_ENV: &str = "GOOSE_CLI_VOICE_TRANSCRIPT_FILE";
 const VOICE_AUTO_SUBMIT_ENV: &str = "GOOSE_CLI_VOICE_AUTO_SUBMIT";
 
+fn default_voice_transcript_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::temp_dir().join("goose-cli-voice-transcript.txt")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("/tmp/goose-cli-voice-transcript.txt")
+    }
+}
+
+fn resolve_voice_transcript_path(env_value: Option<&str>) -> Option<PathBuf> {
+    match env_value {
+        Some(raw) => {
+            let path = raw.trim();
+            if path.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(path))
+            }
+        }
+        None => Some(default_voice_transcript_path()),
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum VoiceInputAction {
     AutoSubmit(String),
@@ -114,13 +141,11 @@ fn voice_auto_submit_enabled() -> bool {
 }
 
 fn read_voice_transcript_from_file() -> Option<String> {
-    let path = std::env::var(VOICE_TRANSCRIPT_ENV).ok()?;
-    let path = path.trim();
-    if path.is_empty() {
-        return None;
-    }
-    let text = std::fs::read_to_string(path).ok()?;
-    let _ = std::fs::write(path, "");
+    let configured_path = std::env::var(VOICE_TRANSCRIPT_ENV).ok();
+    let path = resolve_voice_transcript_path(configured_path.as_deref())?;
+
+    let text = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::write(&path, "");
     Some(text)
 }
 
@@ -536,7 +561,7 @@ Ctrl+{newline_key} - Add a newline (configurable via GOOSE_CLI_NEWLINE_KEY)
 Up/Down arrows - Navigate through command history
 
 Voice input:
-GOOSE_CLI_VOICE_TRANSCRIPT_FILE - Read transcript from file into prompt
+GOOSE_CLI_VOICE_TRANSCRIPT_FILE - Read transcript from file into prompt (defaults to /tmp/goose-cli-voice-transcript.txt when unset)
 GOOSE_CLI_VOICE_AUTO_SUBMIT - Auto-submit transcript when set (truthy)"
     );
 }
@@ -791,6 +816,20 @@ mod tests {
         // Test recipe with invalid extension
         let result = handle_slash_command("/recipe /path/to/file.txt");
         assert!(matches!(result, Some(InputResult::Retry)));
+    }
+
+    #[test]
+    fn test_resolve_voice_transcript_path_defaults_when_unset() {
+        let path = resolve_voice_transcript_path(None).expect("default transcript path");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("goose-cli-voice-transcript.txt")
+        );
+    }
+
+    #[test]
+    fn test_resolve_voice_transcript_path_empty_env_disables_voice_prefill() {
+        assert!(resolve_voice_transcript_path(Some("   ")).is_none());
     }
 
     #[test]
