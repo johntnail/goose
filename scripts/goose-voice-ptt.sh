@@ -43,6 +43,7 @@ Options:
   --confirm               ask before writing transcript file (decline => discard)
   --dry-run               validate config/tools, including hold-key preflight readiness, then exit
   --status-json           emit one machine-parseable status JSON line on exit
+  --reason-buckets        print all known status-json reason buckets and exit (machine-readable)
   -h, --help              show help
 
 Examples:
@@ -88,6 +89,9 @@ Examples:
   # Emit a machine-parseable status JSON line (for wrappers/automation)
   goose-voice-ptt.sh --dry-run --status-json
 
+  # Print all known status reason buckets (for docs/tests/automation sync)
+  goose-voice-ptt.sh --reason-buckets
+
 Rate/cost posture notes (vs Claude Code voice):
   - goose-voice-ptt only handles speech -> transcript insertion; your final Goose prompt still uses
     normal Goose provider/model tokens and rate limits.
@@ -100,6 +104,7 @@ EOF
 MIC_INDEX="0"
 MIC_NAME=""
 LIST_DEVICES=0
+LIST_REASON_BUCKETS=0
 DURATION=""
 MAX_DURATION="30"
 MIN_DURATION="${GOOSE_VOICE_MIN_DURATION:-0.25}"
@@ -158,6 +163,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --list-devices)
       LIST_DEVICES=1
+      shift
+      ;;
+    --reason-buckets)
+      LIST_REASON_BUCKETS=1
       shift
       ;;
     --duration)
@@ -638,6 +647,19 @@ list_audio_devices() {
   echo "Use --mic-index N or --mic-name TEXT with goose-voice-ptt.sh."
 }
 
+list_reason_buckets() {
+  cat <<'EOF'
+accessibility_unavailable
+activate_target_failed
+auto_submit_accessibility_unavailable
+auto_submit_key_event_blocked
+min_duration_too_short
+paste_key_event_blocked
+target_not_frontmost
+tmux_insert_failed
+EOF
+}
+
 resolve_mic_name() {
   local query="$1"
   local out lower_query
@@ -709,6 +731,11 @@ resolve_mic_name() {
 
   echo "🎤 Selected mic index ${MIC_INDEX} from name match: ${query}"
 }
+
+if [[ "$LIST_REASON_BUCKETS" -eq 1 ]]; then
+  list_reason_buckets
+  exit 0
+fi
 
 require_cmd ffmpeg
 

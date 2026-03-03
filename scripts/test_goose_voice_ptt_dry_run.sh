@@ -1177,15 +1177,9 @@ run_reason_bucket_sync_smoke() {
 
   local script_reasons=()
   while IFS= read -r reason; do
+    [[ -z "${reason}" ]] && continue
     script_reasons+=("${reason}")
-  done < <(
-    {
-      grep -oE 'set_paste_failure_reason "[a-z0-9_]+"' "${VOICE_SCRIPT}" \
-        | sed -E 's/.*"([a-z0-9_]+)"/\1/'
-      grep -oE 'STATUS_REASON="[a-z0-9_]+"' "${VOICE_SCRIPT}" \
-        | sed -E 's/.*"([a-z0-9_]+)"/\1/'
-    } | sort -u
-  )
+  done < <("${VOICE_SCRIPT}" --reason-buckets | sort -u)
 
   if [[ ${#docs_reasons[@]} -eq 0 ]]; then
     echo "reason bucket sync smoke: no reason buckets parsed from docs table (${DOCS_FILE})" >&2
@@ -1249,6 +1243,30 @@ require_output_contains "${STATUS_DRY_OUT}" "\"phase\":\"dry-run\"" "status-json
 require_output_contains "${STATUS_DRY_OUT}" "\"outcome\":\"dry_run_ok\"" "status-json dry-run"
 require_output_contains "${STATUS_DRY_OUT}" "\"insert_mode_resolved\":\"file\"" "status-json dry-run"
 pass "status-json emits machine-parseable dry-run summary"
+
+REASON_BUCKETS_OUT=()
+while IFS= read -r reason; do
+  [[ -z "${reason}" ]] && continue
+  REASON_BUCKETS_OUT+=("${reason}")
+done < <("${VOICE_SCRIPT}" --reason-buckets)
+EXPECTED_REASON_BUCKETS=(
+  accessibility_unavailable
+  activate_target_failed
+  auto_submit_accessibility_unavailable
+  auto_submit_key_event_blocked
+  min_duration_too_short
+  paste_key_event_blocked
+  target_not_frontmost
+  tmux_insert_failed
+)
+for expected_reason in "${EXPECTED_REASON_BUCKETS[@]}"; do
+  if ! array_contains_exact "${expected_reason}" "${REASON_BUCKETS_OUT[@]}"; then
+    echo "reason-buckets output missing: ${expected_reason}" >&2
+    printf 'got:\n%s\n' "${REASON_BUCKETS_OUT[*]}" >&2
+    exit 1
+  fi
+done
+pass "reason-buckets command emits canonical machine-readable reason list"
 
 # Auto mode without tmux context should resolve to paste on supported macOS hosts, else file.
 AUTO_OUT="$(${VOICE_SCRIPT} --dry-run --insert-mode auto --provider command --transcribe-cmd cat 2>&1)"
