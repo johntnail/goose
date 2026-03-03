@@ -87,6 +87,13 @@ Examples:
 
   # Emit a machine-parseable status JSON line (for wrappers/automation)
   goose-voice-ptt.sh --dry-run --status-json
+
+Rate/cost posture notes (vs Claude Code voice):
+  - goose-voice-ptt only handles speech -> transcript insertion; your final Goose prompt still uses
+    normal Goose provider/model tokens and rate limits.
+  - --provider local (default) keeps transcription local via whisper.cpp (no cloud transcription spend).
+  - --provider command uses whatever command/service you provide; any API billing/rate limits are external.
+  - Claude Code can exempt voice transcription from some limits; Goose CLI voice currently cannot guarantee that.
 EOF
 }
 
