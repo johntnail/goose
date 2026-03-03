@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VOICE_SCRIPT="${ROOT_DIR}/scripts/goose-voice-ptt.sh"
 LAUNCH_SCRIPT="${ROOT_DIR}/scripts/goose-voice-ptt-launch.sh"
+DOCS_FILE="${ROOT_DIR}/documentation/docs/guides/sessions/in-session-actions.md"
 
 if [[ ! -x "${VOICE_SCRIPT}" ]]; then
   echo "voice script not executable: ${VOICE_SCRIPT}" >&2
@@ -12,6 +13,11 @@ fi
 
 if [[ ! -x "${LAUNCH_SCRIPT}" ]]; then
   echo "launcher script not executable: ${LAUNCH_SCRIPT}" >&2
+  exit 1
+fi
+
+if [[ ! -f "${DOCS_FILE}" ]]; then
+  echo "voice docs file not found: ${DOCS_FILE}" >&2
   exit 1
 fi
 
@@ -64,6 +70,20 @@ require_file_equals() {
     echo "actual:   ${actual}" >&2
     exit 1
   fi
+}
+
+array_contains_exact() {
+  local needle="$1"
+  shift
+
+  local item
+  for item in "$@"; do
+    if [[ "${item}" == "${needle}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 run_success_case() {
@@ -606,6 +626,174 @@ EOF
   pass "status-json and launcher expose auto-submit failure reasons (key-event + accessibility)"
 }
 
+run_paste_reason_bucket_smoke() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    skip "paste reason bucket smoke requires macOS"
+    return
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local fake_bin="${tmp_dir}/bin"
+  mkdir -p "${fake_bin}"
+
+  cat >"${fake_bin}/ffmpeg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${@: -1}"
+mkdir -p "$(dirname "${out}")"
+printf "fake-audio" >"${out}"
+EOF
+  chmod +x "${fake_bin}/ffmpeg"
+
+  cat >"${fake_bin}/pbcopy" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+EOF
+  chmod +x "${fake_bin}/pbcopy"
+
+  # Scenario 1: --paste-app activation fails -> activate_target_failed
+  cat >"${fake_bin}/osascript" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+script="$(cat || true)"
+
+if [[ "$#" -gt 0 ]]; then
+  # activate_target_app_for_paste passes app name as argv[1]
+  exit 1
+fi
+
+if [[ "${script}" == *"count every process"* ]]; then
+  exit 0
+fi
+
+exit 0
+EOF
+  chmod +x "${fake_bin}/osascript"
+
+  set +e
+  local activate_out
+  activate_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --paste-app iTerm2 \
+    --provider command \
+    --transcribe-cmd 'printf "activate failed transcript\\n"' \
+    --status-json 2>&1)"
+  local activate_rc=$?
+  set -e
+
+  if [[ "${activate_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "activate-target-failed status smoke: expected rc 14, got ${activate_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${activate_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${activate_out}" "GOOSE_VOICE_PASTE_FAILURE_REASON=activate_target_failed" "activate-target-failed status smoke"
+  require_output_contains "${activate_out}" "\"reason\":\"activate_target_failed\"" "activate-target-failed status smoke"
+
+  set +e
+  local activate_launcher_out
+  activate_launcher_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --paste-app iTerm2 \
+    --provider command \
+    --transcribe-cmd 'printf "activate failed launcher transcript\\n"' 2>&1)"
+  local activate_launcher_rc=$?
+  set -e
+
+  if [[ "${activate_launcher_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "activate-target-failed launcher smoke: expected rc 14, got ${activate_launcher_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${activate_launcher_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${activate_launcher_out}" "❌ Voice run failed (delivery=paste, reason=activate_target_failed)." "activate-target-failed launcher smoke"
+  require_output_contains "${activate_launcher_out}" "Hint: verify --paste-app app name and that the app is installed/running." "activate-target-failed launcher smoke"
+
+  # Scenario 2: paste key event blocked with System Events accessible -> paste_key_event_blocked
+  cat >"${fake_bin}/osascript" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+script="$(cat || true)"
+
+if [[ "${script}" == *"name of first application process whose frontmost is true"* ]]; then
+  echo "Terminal"
+  exit 0
+fi
+
+if [[ "${script}" == *"keystroke \"v\" using command down"* ]]; then
+  exit 1
+fi
+
+if [[ "${script}" == *"count every process"* ]]; then
+  exit 0
+fi
+
+exit 0
+EOF
+  chmod +x "${fake_bin}/osascript"
+
+  set +e
+  local key_blocked_out
+  key_blocked_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${VOICE_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --provider command \
+    --transcribe-cmd 'printf "key event blocked transcript\\n"' \
+    --status-json 2>&1)"
+  local key_blocked_rc=$?
+  set -e
+
+  if [[ "${key_blocked_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "paste-key-event-blocked status smoke: expected rc 14, got ${key_blocked_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${key_blocked_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${key_blocked_out}" "GOOSE_VOICE_PASTE_FAILURE_REASON=paste_key_event_blocked" "paste-key-event-blocked status smoke"
+  require_output_contains "${key_blocked_out}" "\"reason\":\"paste_key_event_blocked\"" "paste-key-event-blocked status smoke"
+
+  set +e
+  local key_blocked_launcher_out
+  key_blocked_launcher_out="$(PATH="${fake_bin}:${PATH}" env -u TMUX "${LAUNCH_SCRIPT}" \
+    --duration 1 \
+    --min-duration 0 \
+    --insert-mode paste \
+    --provider command \
+    --transcribe-cmd 'printf "key event blocked launcher transcript\\n"' 2>&1)"
+  local key_blocked_launcher_rc=$?
+  set -e
+
+  if [[ "${key_blocked_launcher_rc}" -ne 14 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "paste-key-event-blocked launcher smoke: expected rc 14, got ${key_blocked_launcher_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${key_blocked_launcher_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${key_blocked_launcher_out}" "❌ Voice run failed (delivery=paste, reason=paste_key_event_blocked)." "paste-key-event-blocked launcher smoke"
+  require_output_contains "${key_blocked_launcher_out}" "Hint: focused app blocked synthetic key events; retry with --insert-mode file or adjust permissions/state." "paste-key-event-blocked launcher smoke"
+
+  rm -rf "${tmp_dir}"
+  pass "status-json and launcher expose activate_target_failed + paste_key_event_blocked reasons"
+}
+
 run_target_not_frontmost_reason_smoke() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
     skip "target-not-frontmost reason smoke requires macOS"
@@ -903,6 +1091,76 @@ EOF
   pass "launcher emits concise tmux failure summary with guidance"
 }
 
+run_reason_bucket_sync_smoke() {
+  local docs_reasons=()
+  while IFS= read -r reason; do
+    docs_reasons+=("${reason}")
+  done < <(
+    grep -E '^[[:space:]]*\| `[a-z0-9_]+` \|' "${DOCS_FILE}" \
+      | sed -E 's/^[[:space:]]*\| `([a-z0-9_]+)` \|.*/\1/' \
+      | sort -u
+  )
+
+  local script_reasons=()
+  while IFS= read -r reason; do
+    script_reasons+=("${reason}")
+  done < <(
+    {
+      grep -oE 'set_paste_failure_reason "[a-z0-9_]+"' "${VOICE_SCRIPT}" \
+        | sed -E 's/.*"([a-z0-9_]+)"/\1/'
+      grep -oE 'STATUS_REASON="[a-z0-9_]+"' "${VOICE_SCRIPT}" \
+        | sed -E 's/.*"([a-z0-9_]+)"/\1/'
+    } | sort -u
+  )
+
+  if [[ ${#docs_reasons[@]} -eq 0 ]]; then
+    echo "reason bucket sync smoke: no reason buckets parsed from docs table (${DOCS_FILE})" >&2
+    exit 1
+  fi
+
+  if [[ ${#script_reasons[@]} -eq 0 ]]; then
+    echo "reason bucket sync smoke: no reason buckets parsed from script (${VOICE_SCRIPT})" >&2
+    exit 1
+  fi
+
+  local missing_in_script=()
+  local missing_in_docs=()
+  local missing_in_tests=()
+  local reason
+
+  for reason in "${docs_reasons[@]}"; do
+    if ! array_contains_exact "${reason}" "${script_reasons[@]}"; then
+      missing_in_script+=("${reason}")
+    fi
+
+    if ! grep -Fq "${reason}" "$0"; then
+      missing_in_tests+=("${reason}")
+    fi
+  done
+
+  for reason in "${script_reasons[@]}"; do
+    if ! array_contains_exact "${reason}" "${docs_reasons[@]}"; then
+      missing_in_docs+=("${reason}")
+    fi
+  done
+
+  if [[ ${#missing_in_script[@]} -gt 0 || ${#missing_in_docs[@]} -gt 0 || ${#missing_in_tests[@]} -gt 0 ]]; then
+    echo "reason bucket sync smoke failed:" >&2
+    if [[ ${#missing_in_script[@]} -gt 0 ]]; then
+      echo "  documented but not emitted by script: ${missing_in_script[*]}" >&2
+    fi
+    if [[ ${#missing_in_docs[@]} -gt 0 ]]; then
+      echo "  emitted by script but undocumented: ${missing_in_docs[*]}" >&2
+    fi
+    if [[ ${#missing_in_tests[@]} -gt 0 ]]; then
+      echo "  documented but missing test coverage strings: ${missing_in_tests[*]}" >&2
+    fi
+    exit 1
+  fi
+
+  pass "reason bucket docs/script/tests sync (${#docs_reasons[@]} buckets)"
+}
+
 BASE_CMD=("${VOICE_SCRIPT}" --dry-run --provider command --transcribe-cmd cat)
 
 # Default/file dry-run should succeed and keep file insertion.
@@ -946,9 +1204,11 @@ run_auto_mode_paste_fallback_smoke
 run_launcher_status_summary_smoke
 run_mic_name_resolution_smoke
 run_auto_submit_failure_reason_smoke
+run_paste_reason_bucket_smoke
 run_target_not_frontmost_reason_smoke
 run_launcher_tmux_fallback_summary_smoke
 run_launcher_tmux_error_summary_smoke
+run_reason_bucket_sync_smoke
 
 # Hold mode dry-run should surface preflight readiness details.
 HOLD_OUT="$(${VOICE_SCRIPT} --dry-run --ptt-mode hold --provider command --transcribe-cmd cat 2>&1)"
