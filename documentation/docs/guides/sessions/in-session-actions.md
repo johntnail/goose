@@ -303,6 +303,18 @@ Speak to goose directly instead of typing your prompts.
         - Use `scripts/goose-voice-ptt-launch.sh ...` for a wrapper that consumes `--status-json` and prints a concise human-readable outcome (including tmux-target guidance for `tmux_insert_failed`).
         - If paste lands in the wrong app/window, set `--paste-app "iTerm2"` (or your terminal app name) to activate the target app before Cmd+V.
 
+        Quick `GOOSE_VOICE_STATUS_JSON.reason` recovery map:
+
+        | `reason` value | Typical trigger | What to do next |
+        | --- | --- | --- |
+        | `tmux_insert_failed` | tmux paste/send failed or target pane/session unavailable | Verify `tmux ls`, confirm `--tmux-target`, or rerun with `--insert-mode file`. |
+        | `activate_target_failed` | `--paste-app` app could not be activated | Check app name (`--paste-app`), make sure app is installed/running, then retry. |
+        | `target_not_frontmost` | Another app stole focus after activation | Bring the target terminal to front and retry (or keep using `--paste-app`). |
+        | `accessibility_unavailable` | macOS blocked System Events paste keystroke | Grant Accessibility/Input Monitoring to terminal + osascript host; rerun `--dry-run`. |
+        | `paste_key_event_blocked` | Cmd+V key event blocked by focused app state/policy | Try target terminal focus reset, then fallback to `--insert-mode file` if still blocked. |
+        | `auto_submit_accessibility_unavailable` | Paste worked but Enter key injection blocked by missing accessibility permissions | Grant permissions, or disable `--auto-submit` and press Enter manually. |
+        | `auto_submit_key_event_blocked` | Paste worked but Enter key injection blocked by app state | Keep `--auto-submit` off and submit manually, or switch to tmux/file mode. |
+
         Practical non-tmux reliability tips:
         - Run `scripts/goose-voice-ptt.sh --dry-run --insert-mode auto --paste-app "YourTerminal"` once before sessions to confirm accessibility + focus targeting.
         - Keep your Goose terminal window frontmost when releasing push-to-talk; if another app steals focus, auto mode intentionally falls back to transcript-file delivery.
