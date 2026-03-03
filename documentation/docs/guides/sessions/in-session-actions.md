@@ -283,6 +283,12 @@ Speak to goose directly instead of typing your prompts.
         - `--confirm` to approve or discard before writing transcript into Goose
         - `--provider local|command` with `--model`, `--lang`, and `--transcribe-cmd`
 
+        Troubleshooting and preflight:
+        - Run `scripts/goose-voice-ptt.sh --dry-run --ptt-mode hold` before your first session to verify keywatch/accessibility readiness.
+        - If hold-key permissions are unavailable, Goose prints a warning and falls back to ENTER mode by default.
+        - Add `--hold-strict` to fail fast instead of falling back when hold-key mode is unavailable.
+        - When `--duration SEC` is set, fixed-duration capture takes priority and hold-key readiness checks are skipped.
+
         Cost/rate-limit posture vs Claude Code voice:
         - Local mode (`--provider local`) runs on-device with `whisper-cli` (no cloud API cost).
         - Command mode can use cloud STT; provider billing/rate limits depend on your configured command.
