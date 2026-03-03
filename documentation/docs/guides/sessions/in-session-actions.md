@@ -272,7 +272,8 @@ Speak to goose directly instead of typing your prompts.
         3. Hold `Space` to record, release to transcribe.
         4. Insertion behavior:
            - In tmux (`--insert-mode auto`): transcript is pasted directly into the active pane input (fast path).
-           - On macOS outside tmux: `--insert-mode auto` uses focused-app paste (`Cmd+V`) via clipboard automation.
+           - On macOS: `--insert-mode auto` uses focused-app paste (`Cmd+V`) via clipboard automation when tmux is unavailable.
+           - If `--paste-app "APP"` is set, `--insert-mode auto` prefers the focused-app paste path (even when tmux is available), then falls back to file mode on failure.
            - Fallback: transcript is written to `GOOSE_CLI_VOICE_TRANSCRIPT_FILE` for next-prompt prefill.
 
         Helpful options:
