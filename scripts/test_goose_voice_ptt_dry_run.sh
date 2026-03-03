@@ -84,6 +84,15 @@ pass "auto insert-mode resolves to file when no tmux context"
 run_failure_case "invalid --ptt-mode is rejected" 8 \
   "${VOICE_SCRIPT}" --dry-run --ptt-mode nope --provider command --transcribe-cmd cat
 
+run_failure_case "invalid --mic-index is rejected" 8 \
+  "${VOICE_SCRIPT}" --dry-run --mic-index -1 --provider command --transcribe-cmd cat
+
+run_failure_case "invalid --duration is rejected" 8 \
+  "${VOICE_SCRIPT}" --dry-run --duration 0 --provider command --transcribe-cmd cat
+
+run_failure_case "invalid --max-duration is rejected" 8 \
+  "${VOICE_SCRIPT}" --dry-run --max-duration 0 --provider command --transcribe-cmd cat
+
 if command -v tmux >/dev/null 2>&1; then
   # For tmux mode, missing session/target should fail with a clear code.
   run_failure_case "tmux mode requires TMUX session or --tmux-target" 13 \

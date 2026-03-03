@@ -103,7 +103,11 @@ STATUS_LINES=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mic-index)
-      MIC_INDEX="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "--mic-index requires a non-negative integer." >&2
+        exit 8
+      fi
+      MIC_INDEX="${2}"
       shift 2
       ;;
     --mic-name)
@@ -115,11 +119,19 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --duration)
-      DURATION="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "--duration requires a positive number of seconds." >&2
+        exit 8
+      fi
+      DURATION="${2}"
       shift 2
       ;;
     --max-duration)
-      MAX_DURATION="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "--max-duration requires a positive number of seconds." >&2
+        exit 8
+      fi
+      MAX_DURATION="${2}"
       shift 2
       ;;
     --ptt-mode)
@@ -297,6 +309,31 @@ validate_insert_mode() {
   esac
 }
 
+is_non_negative_integer() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+is_positive_seconds() {
+  [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v value="$1" 'BEGIN { exit (value > 0) ? 0 : 1 }'
+}
+
+validate_mic_index() {
+  if ! is_non_negative_integer "$MIC_INDEX"; then
+    echo "Invalid --mic-index: '$MIC_INDEX' (expected non-negative integer)." >&2
+    exit 8
+  fi
+}
+
+validate_seconds_arg() {
+  local flag="$1"
+  local value="$2"
+
+  if ! is_positive_seconds "$value"; then
+    echo "Invalid ${flag}: '${value}' (expected positive seconds, e.g. 2 or 2.5)." >&2
+    exit 8
+  fi
+}
+
 fallback_hold_unavailable() {
   local reason="$1"
   reason="${reason//$'\n'/ }"
@@ -370,6 +407,12 @@ fi
 if [[ -n "$MIC_NAME" ]]; then
   resolve_mic_name "$MIC_NAME"
 fi
+
+validate_mic_index
+if [[ -n "$DURATION" ]]; then
+  validate_seconds_arg "--duration" "$DURATION"
+fi
+validate_seconds_arg "--max-duration" "$MAX_DURATION"
 
 validate_mode
 validate_insert_mode
