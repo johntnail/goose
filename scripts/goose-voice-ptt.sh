@@ -14,6 +14,7 @@ Defaults:
   - Transcript file: $GOOSE_CLI_VOICE_TRANSCRIPT_FILE or /tmp/goose-cli-voice-transcript.txt
   - Interactive record mode: press ENTER to start, ENTER to stop
   - Max duration guard in interactive mode: 30s
+  - Hold mode falls back to ENTER mode if key-state polling is unavailable
 
 Options:
   --mic-index N           avfoundation audio index (default: 0)
@@ -21,6 +22,7 @@ Options:
   --max-duration SEC      safety cap for interactive record mode (default: 30)
   --ptt-mode MODE         interactive mode: enter|hold (default: enter)
   --ptt-key KEY           hold mode key: space|enter|return|left_shift|right_shift or keycode int (default: space)
+  --hold-strict           fail instead of falling back when hold-key detection is unavailable
   --transcript-file PATH  transcript output file (default noted above)
   --auto-submit           append " submit" so Goose CLI auto-sends after insert
   --provider NAME         transcription provider: local|command (default: local)
@@ -54,6 +56,7 @@ DURATION=""
 MAX_DURATION="30"
 PTT_MODE="${GOOSE_VOICE_PTT_MODE:-enter}"
 PTT_KEY="${GOOSE_VOICE_PTT_KEY:-space}"
+HOLD_STRICT="${GOOSE_VOICE_HOLD_STRICT:-0}"
 TRANSCRIPT_FILE="${GOOSE_CLI_VOICE_TRANSCRIPT_FILE:-/tmp/goose-cli-voice-transcript.txt}"
 AUTO_SUBMIT=0
 PROVIDER="${GOOSE_VOICE_PROVIDER:-local}"
@@ -86,6 +89,10 @@ while [[ $# -gt 0 ]]; do
     --ptt-key)
       PTT_KEY="${2:-}"
       shift 2
+      ;;
+    --hold-strict)
+      HOLD_STRICT=1
+      shift
       ;;
     --transcript-file)
       TRANSCRIPT_FILE="${2:-}"
@@ -176,6 +183,19 @@ validate_mode() {
   esac
 }
 
+fallback_hold_unavailable() {
+  local reason="$1"
+  reason="${reason//$'\n'/ }"
+
+  if [[ "$HOLD_STRICT" == "1" ]]; then
+    echo "Hold-key detection unavailable (${reason}). Re-run without --hold-strict to fall back to ENTER mode." >&2
+    exit 10
+  fi
+
+  echo "⚠️  Hold-key detection unavailable (${reason}). Falling back to ENTER mode." >&2
+  record_interactive_enter
+}
+
 require_cmd ffmpeg
 validate_mode
 
@@ -234,16 +254,32 @@ record_interactive_hold() {
   key_code="$(ptt_key_to_code "$PTT_KEY")"
 
   echo "🎙️  Hold ${PTT_KEY} to record (Ctrl+C cancels; max ${MAX_DURATION}s)."
-  swift "$KEYWATCH_SWIFT" --mode down --key-code "$key_code" >/dev/null
+
+  local down_msg
+  if ! down_msg="$(swift "$KEYWATCH_SWIFT" --mode down --key-code "$key_code" 2>&1)"; then
+    fallback_hold_unavailable "$down_msg"
+    return
+  fi
 
   echo "⏺️  Recording... release ${PTT_KEY} to stop."
   ffmpeg -y -f avfoundation -i ":${MIC_INDEX}" -t "$MAX_DURATION" -c:a aac -b:a 96k "$AUDIO_PATH" >"$FFMPEG_LOG" 2>&1 &
   local ffmpeg_pid=$!
 
-  if swift "$KEYWATCH_SWIFT" --mode up --key-code "$key_code" --timeout "$MAX_DURATION" >/dev/null; then
+  local up_msg
+  if up_msg="$(swift "$KEYWATCH_SWIFT" --mode up --key-code "$key_code" --timeout "$MAX_DURATION" 2>&1)"; then
     kill -INT "$ffmpeg_pid" >/dev/null 2>&1 || true
   else
-    echo "⏱️  Max duration reached before key release (${MAX_DURATION}s)." >&2
+    local up_rc=$?
+    up_msg="${up_msg//$'\n'/ }"
+    if [[ "$up_rc" -eq 3 ]]; then
+      echo "⏱️  Max duration reached before key release (${MAX_DURATION}s)." >&2
+    elif [[ "$HOLD_STRICT" == "1" ]]; then
+      kill -INT "$ffmpeg_pid" >/dev/null 2>&1 || true
+      echo "Hold-key release detection failed (${up_msg}). Re-run without --hold-strict to continue with max-duration fallback." >&2
+      exit 10
+    else
+      echo "⚠️  Hold-key release detection failed (${up_msg}). Continuing until max duration (${MAX_DURATION}s)." >&2
+    fi
   fi
 
   wait "$ffmpeg_pid" || true
