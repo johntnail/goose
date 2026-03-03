@@ -347,6 +347,24 @@ EOF
   require_output_contains "${unique_out}" "Mic index: 2" "mic-name unique smoke"
 
   set +e
+  local missing_index_out
+  missing_index_out="$(PATH="${fake_bin}:${PATH}" "${VOICE_SCRIPT}" --dry-run --mic-index 9 --provider command --transcribe-cmd cat 2>&1)"
+  local missing_index_rc=$?
+  set -e
+
+  if [[ "${missing_index_rc}" -ne 11 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "mic-index missing-device smoke: expected rc 11, got ${missing_index_rc}" >&2
+    echo "--- output ---" >&2
+    printf "%s\n" "${missing_index_out}" >&2
+    echo "--------------" >&2
+    exit 1
+  fi
+
+  require_output_contains "${missing_index_out}" "No audio device found for --mic-index 9." "mic-index missing-device smoke"
+  require_output_contains "${missing_index_out}" "Run goose-voice-ptt.sh --list-devices to inspect available indices." "mic-index missing-device smoke"
+
+  set +e
   local ambiguous_out
   ambiguous_out="$(PATH="${fake_bin}:${PATH}" "${VOICE_SCRIPT}" --dry-run --mic-name usb --provider command --transcribe-cmd cat 2>&1)"
   local ambiguous_rc=$?
@@ -386,7 +404,7 @@ EOF
   require_output_contains "${no_match_out}" "[0] Built-in Mic" "mic-name no-match smoke"
 
   rm -rf "${tmp_dir}"
-  pass "mic-name dry-run resolves unique matches, rejects ambiguous matches, and suggests close devices"
+  pass "mic selection dry-run resolves names, rejects missing indices/ambiguous matches, and suggests close devices"
 }
 
 run_auto_submit_failure_reason_smoke() {

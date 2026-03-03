@@ -675,6 +675,28 @@ validate_mic_index() {
   fi
 }
 
+validate_mic_index_exists() {
+  local out
+  local saw_devices=0
+
+  out="$(audio_devices_output)"
+  while IFS=$'\t' read -r idx _name; do
+    [[ -z "$idx" ]] && continue
+    saw_devices=1
+    if [[ "$idx" == "$MIC_INDEX" ]]; then
+      return 0
+    fi
+  done < <(audio_device_entries "$out")
+
+  if [[ "$saw_devices" -eq 0 ]]; then
+    return 0
+  fi
+
+  echo "No audio device found for --mic-index ${MIC_INDEX}." >&2
+  echo "Run goose-voice-ptt.sh --list-devices to inspect available indices." >&2
+  exit 11
+}
+
 validate_seconds_arg() {
   local flag="$1"
   local value="$2"
@@ -734,6 +756,28 @@ run_hold_preflight() {
 
 audio_devices_output() {
   ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 || true
+}
+
+audio_device_entries() {
+  local out="${1:-}"
+  if [[ -z "$out" ]]; then
+    out="$(audio_devices_output)"
+  fi
+
+  awk '
+    /AVFoundation audio devices:/ {show=1; next}
+    /AVFoundation video devices:/ {show=0}
+    show && /AVFoundation indev/ {
+      if (match($0, /\[[0-9]+\]/)) {
+        idx = substr($0, RSTART + 1, RLENGTH - 2)
+        name = $0
+        sub(/^.*\[[0-9]+\] /, "", name)
+        if (length(name) > 0) {
+          printf "%s\t%s\n", idx, name
+        }
+      }
+    }
+  ' <<<"$out"
 }
 
 list_audio_devices() {
@@ -796,20 +840,7 @@ resolve_mic_name() {
       partial_match_indices+=("$idx")
       partial_match_names+=("$name")
     fi
-  done < <(awk '
-    /AVFoundation audio devices:/ {show=1; next}
-    /AVFoundation video devices:/ {show=0}
-    show && /AVFoundation indev/ {
-      if (match($0, /\[[0-9]+\]/)) {
-        idx = substr($0, RSTART + 1, RLENGTH - 2)
-        name = $0
-        sub(/^.*\[[0-9]+\] /, "", name)
-        if (length(name) > 0) {
-          printf "%s\t%s\n", idx, name
-        }
-      }
-    }
-  ' <<<"$out")
+  done < <(audio_device_entries "$out")
 
   if [[ "${#exact_match_indices[@]}" -gt 1 ]] || ([[ "${#exact_match_indices[@]}" -eq 0 ]] && [[ "${#partial_match_indices[@]}" -gt 1 ]]); then
     echo "Multiple audio devices match --mic-name '$query':" >&2
@@ -892,6 +923,7 @@ if [[ -n "$MIC_NAME" ]]; then
 fi
 
 validate_mic_index
+validate_mic_index_exists
 if [[ -n "$DURATION" ]]; then
   validate_seconds_arg "--duration" "$DURATION"
 fi
